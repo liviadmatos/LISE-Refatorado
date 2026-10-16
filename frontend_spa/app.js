@@ -10,7 +10,7 @@
     explore: null, exploreKind: 'both', exploreSearch: '', exploreArea: '', sort: 'asc',
     detail: null, detailType: '', detailBack: 'explore', collections: [], collection: null,
     sources: null, practiceSource: null, practiceGame: '', trailCatalog: null, trailAreas: [],
-    gameSession: null, gameFeedback: null, gameIndex: 0, memorySelected: [], memoryPairs: [],
+    gameSession: null, gameFeedback: null, gameIndex: 0, decipherOrder: [], decipherSelectedIndex: null, memorySelected: [], memoryPairs: [],
     memoryMatched: new Set(), memoryAttempts: 0, memoryStartedAt: 0, memoryLocked: false, memoryTimer: null, result: null, busy: false,
     studentDetail: null, assessmentTarget: null, assessmentSession: null, assessmentIndex: 0,
     assessmentAnswer: null, assessmentResult: null,
@@ -374,7 +374,14 @@
     }
     if (session.game === 'familia_palavras') return `<section class="card question">${header}<form data-form="game-answer"><h2 class="question-title">Leia o significado: “${esc(question.prompt)}”</h2><p>Marque todos os termos que usam esse radical. Você pode escolher várias palavras.</p><div class="option-list">${question.options.map(o=>`<label class="option"><input type="checkbox" name="answer" value="${o.id}"><span>${esc(o.name)}</span></label>`).join('')}</div><button class="btn btn-primary">Conferir termos</button></form></section>`;
     if (session.game === 'bioquiz') return `<section class="card question">${header}<form data-form="game-answer"><h2 class="question-title">${esc(question.prompt)}</h2><div class="option-list">${question.options.map(o=>`<label class="option"><input type="radio" name="answer" value="${esc(o.id)}" required><span>${esc(o.text)}</span></label>`).join('')}</div><button class="btn btn-primary">Responder</button></form></section>`;
-    if (session.game === 'decifrador') return `<section class="card question">${header}<h2 class="question-title">Que termo corresponde a esta definição?</h2><p>${esc(question.clue)}</p><div class="letter-bank">${question.letters.map(l=>`<span class="letter">${esc(l)}</span>`).join('')}</div><p class="muted small">Radicais: ${question.radicals.map(r=>`${esc(r.text)} — ${esc(r.meaning)}`).join(' · ')}</p><form data-form="game-answer"><div class="field"><label>Sua resposta</label><input name="answer" autocomplete="off" required></div><button class="btn btn-primary">Conferir</button></form></section>`;
+    if (session.game === 'decifrador') {
+      if (state.decipherOrder.length !== question.letters.length) {
+        state.decipherOrder = question.letters.map((_, index) => index);
+        state.decipherSelectedIndex = null;
+      }
+      const letters = state.decipherOrder.map((letterIndex, position) => `<li><button class="decipher-letter ${state.decipherSelectedIndex===position?'selected':''}" type="button" draggable="true" data-action="decipher-letter" data-position="${position}" aria-label="Letra ${esc(question.letters[letterIndex])}, posição ${position+1}" aria-pressed="${state.decipherSelectedIndex===position}">${esc(question.letters[letterIndex])}</button></li>`).join('');
+      return `<section class="card question">${header}<h2 class="question-title">Que termo corresponde a esta definição?</h2><p>${esc(question.clue)}</p><ol class="decipher-letters" aria-label="Letras para ordenar">${letters}</ol><p class="muted small">Arraste as letras para ordenar. No toque, selecione duas letras para trocar de posição.</p><p class="muted small">Radicais: ${question.radicals.map(r=>`${esc(r.text)} — ${esc(r.meaning)}`).join(' · ')}</p><form data-form="game-answer"><button class="btn btn-primary" type="submit">Conferir</button></form></section>`;
+    }
     if (session.game === 'memoria') {
       const cards = question.cards || [];
       const seconds=Math.max(0,Math.floor((Date.now()-(state.memoryStartedAt||Date.now()))/1000));
@@ -534,6 +541,7 @@
     const data = new FormData(form);
     let body = {question_id:question.id};
     if (state.gameSession.game === 'familia_palavras') body.answer = data.getAll('answer');
+    else if (state.gameSession.game === 'decifrador') body.answer = state.decipherOrder.map(index => question.letters[index]).join('');
     else body.answer = data.get('answer');
     const answer = await api(`/games/sessions/${state.gameSession.session_id}/answer`, {method:'POST', body});
     state.gameFeedback = answer; render();
@@ -541,7 +549,7 @@
 
   async function nextQuestion() {
     if (state.gameIndex + 1 < state.gameSession.questions.length) {
-      clearTimeout(state.memoryTimer); state.gameIndex++; state.gameFeedback=null; state.memoryPairs=[]; state.memoryMatched=new Set(); state.memorySelected=[]; state.memoryAttempts=0; state.memoryStartedAt=Date.now(); state.memoryLocked=false; render(); return;
+      clearTimeout(state.memoryTimer); state.gameIndex++; state.gameFeedback=null; state.decipherOrder=[]; state.decipherSelectedIndex=null; state.memoryPairs=[]; state.memoryMatched=new Set(); state.memorySelected=[]; state.memoryAttempts=0; state.memoryStartedAt=Date.now(); state.memoryLocked=false; render(); return;
     }
     const result = await api(`/games/sessions/${state.gameSession.session_id}/finish`, {method:'POST', body:{}});
     state.result = result; state.view='result'; render();
@@ -633,6 +641,16 @@
       else if (action === 'choose-game-back') { state.view='choose-game'; render(); }
       else if (action === 'nav-games') { clearTimeout(state.memoryTimer); state.memoryLocked=false; state.view='games'; state.gameSession=null; render(); }
       else if (action === 'next-question') await nextQuestion();
+      else if (action === 'decipher-letter') {
+        const position=Number(buttonEl.dataset.position);
+        if (state.decipherSelectedIndex === null) state.decipherSelectedIndex=position;
+        else if (state.decipherSelectedIndex === position) state.decipherSelectedIndex=null;
+        else {
+          [state.decipherOrder[state.decipherSelectedIndex],state.decipherOrder[position]]=[state.decipherOrder[position],state.decipherOrder[state.decipherSelectedIndex]];
+          state.decipherSelectedIndex=null;
+        }
+        render();
+      }
       else if (action === 'assessment-next') {
         if (state.assessmentIndex + 1 < state.assessmentSession.total) {
           state.assessmentIndex++; state.assessmentAnswer=null; render();
@@ -645,6 +663,37 @@
       else if (action === 'memory-card') await memoryCard(buttonEl.dataset.card);
       else if (action === 'add-to-collection') { /* submitted by the form handler */ }
     } catch (error) { if (state.loading) { state.loadError=error.message; render(); } toast(error.message); }
+  }
+
+  function handleDecipherDragStart(event) {
+    const letter=event.target.closest('[data-action="decipher-letter"]');
+    if (!letter) return;
+    event.dataTransfer.effectAllowed='move';
+    event.dataTransfer.setData('text/plain',letter.dataset.position);
+    letter.classList.add('dragging');
+  }
+
+  function handleDecipherDragOver(event) {
+    if (!event.target.closest('[data-action="decipher-letter"]')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect='move';
+  }
+
+  function handleDecipherDrop(event) {
+    const target=event.target.closest('[data-action="decipher-letter"]');
+    if (!target) return;
+    event.preventDefault();
+    const from=Number(event.dataTransfer.getData('text/plain'));
+    const to=Number(target.dataset.position);
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from===to ||
+        from<0 || to<0 || from>=state.decipherOrder.length || to>=state.decipherOrder.length) return;
+    [state.decipherOrder[from],state.decipherOrder[to]]=[state.decipherOrder[to],state.decipherOrder[from]];
+    state.decipherSelectedIndex=null;
+    render();
+  }
+
+  function handleDecipherDragEnd(event) {
+    event.target.closest('[data-action="decipher-letter"]')?.classList.remove('dragging');
   }
 
   async function memoryCard(cardId) {
@@ -785,6 +834,10 @@
   }
 
   app.addEventListener('click', event=>handleClick(event));
+  app.addEventListener('dragstart', handleDecipherDragStart);
+  app.addEventListener('dragover', handleDecipherDragOver);
+  app.addEventListener('drop', handleDecipherDrop);
+  app.addEventListener('dragend', handleDecipherDragEnd);
   app.addEventListener('submit', event=>handleSubmit(event));
   app.addEventListener('change', handleChange);
   app.addEventListener('input', handleInput);
