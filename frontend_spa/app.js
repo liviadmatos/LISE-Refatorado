@@ -10,7 +10,7 @@
     explore: null, exploreKind: 'both', exploreSearch: '', exploreArea: '', sort: 'asc',
     detail: null, detailType: '', detailBack: 'explore', collections: [], collection: null,
     sources: null, practiceSource: null, practiceGame: '', trailCatalog: null, trailAreas: [],
-    gameSession: null, gameFeedback: null, gameIndex: 0, decipherOrder: [], decipherSelectedIndex: null, memorySelected: [], memoryPairs: [],
+    gameSession: null, gameFeedback: null, gameIndex: 0, decipherSlots: [], decipherSelectedLetter: null, memorySelected: [], memoryPairs: [],
     memoryMatched: new Set(), memoryAttempts: 0, memoryStartedAt: 0, memoryLocked: false, memoryTimer: null, result: null, busy: false,
     studentDetail: null, assessmentTarget: null, assessmentSession: null, assessmentIndex: 0,
     assessmentAnswer: null, assessmentResult: null,
@@ -375,12 +375,19 @@
     if (session.game === 'familia_palavras') return `<section class="card question">${header}<form data-form="game-answer"><h2 class="question-title">Leia o significado: “${esc(question.prompt)}”</h2><p>Marque todos os termos que usam esse radical. Você pode escolher várias palavras.</p><div class="option-list">${question.options.map(o=>`<label class="option"><input type="checkbox" name="answer" value="${o.id}"><span>${esc(o.name)}</span></label>`).join('')}</div><button class="btn btn-primary">Conferir termos</button></form></section>`;
     if (session.game === 'bioquiz') return `<section class="card question">${header}<form data-form="game-answer"><h2 class="question-title">${esc(question.prompt)}</h2><div class="option-list">${question.options.map(o=>`<label class="option"><input type="radio" name="answer" value="${esc(o.id)}" required><span>${esc(o.text)}</span></label>`).join('')}</div><button class="btn btn-primary">Responder</button></form></section>`;
     if (session.game === 'decifrador') {
-      if (state.decipherOrder.length !== question.letters.length) {
-        state.decipherOrder = question.letters.map((_, index) => index);
-        state.decipherSelectedIndex = null;
+      if (state.decipherSlots.length !== question.letters.length) {
+        state.decipherSlots = question.letters.map(() => null);
+        state.decipherSelectedLetter = null;
       }
-      const letters = state.decipherOrder.map((letterIndex, position) => `<li><button class="decipher-letter ${state.decipherSelectedIndex===position?'selected':''}" type="button" draggable="true" data-action="decipher-letter" data-position="${position}" aria-label="Letra ${esc(question.letters[letterIndex])}, posição ${position+1}" aria-pressed="${state.decipherSelectedIndex===position}">${esc(question.letters[letterIndex])}</button></li>`).join('');
-      return `<section class="card question">${header}<h2 class="question-title">Que termo corresponde a esta definição?</h2><p>${esc(question.clue)}</p><ol class="decipher-letters" aria-label="Letras para ordenar">${letters}</ol><p class="muted small">Arraste as letras para ordenar. No toque, selecione duas letras para trocar de posição.</p><p class="muted small">Radicais: ${question.radicals.map(r=>`${esc(r.text)} — ${esc(r.meaning)}`).join(' · ')}</p><form data-form="game-answer"><button class="btn btn-primary" type="submit">Conferir</button></form></section>`;
+      const placed = new Set(state.decipherSlots.filter(index => index !== null));
+      const letters = question.letters.map((letter, index) => placed.has(index) ? '' : `<li><button class="decipher-letter ${state.decipherSelectedLetter===index?'selected':''}" type="button" draggable="true" data-action="decipher-letter" data-letter-index="${index}" aria-label="Letra ${esc(letter)}" aria-pressed="${state.decipherSelectedLetter===index}">${esc(letter)}</button></li>`).join('');
+      const slots = state.decipherSlots.map((letterIndex, position) => {
+        const letter = letterIndex === null ? '' : question.letters[letterIndex];
+        const selected = letterIndex !== null && state.decipherSelectedLetter === letterIndex;
+        return `<li><button class="decipher-slot ${letterIndex===null?'empty':''} ${selected?'selected':''}" type="button" data-action="decipher-slot" data-decipher-drop="slot" data-slot-index="${position}" ${letterIndex===null?'':`draggable="true" data-letter-index="${letterIndex}"`} aria-label="${letterIndex===null?`Espaço ${position+1} vazio`:`Letra ${esc(letter)}, posição ${position+1}`}" ${letterIndex===null?'':'aria-pressed="'+selected+'"'}>${esc(letter)}</button></li>`;
+      }).join('');
+      const complete = state.decipherSlots.every(index => index !== null);
+      return `<section class="card question">${header}<h2 class="question-title">Que termo corresponde a esta definição?</h2><p>${esc(question.clue)}</p><div class="decipher-board"><div><p class="field-label">Letras disponíveis</p><div class="decipher-bank" data-decipher-drop="bank"><ul class="decipher-letters">${letters}</ul></div></div><div class="decipher-answer"><p class="field-label">Monte a palavra</p><ol class="decipher-slots" aria-label="Caixa de resposta">${slots}</ol></div></div><p class="muted small">Arraste cada letra para um espaço. Para retirar, arraste-a de volta às letras disponíveis. No toque, selecione uma letra e depois o espaço; toque numa letra preenchida para devolvê-la.</p><p class="muted small">Radicais: ${question.radicals.map(r=>`${esc(r.text)} — ${esc(r.meaning)}`).join(' · ')}</p><form data-form="game-answer"><button class="btn btn-primary" type="submit" ${complete?'':'disabled'}>Conferir</button></form></section>`;
     }
     if (session.game === 'memoria') {
       const cards = question.cards || [];
@@ -541,7 +548,7 @@
     const data = new FormData(form);
     let body = {question_id:question.id};
     if (state.gameSession.game === 'familia_palavras') body.answer = data.getAll('answer');
-    else if (state.gameSession.game === 'decifrador') body.answer = state.decipherOrder.map(index => question.letters[index]).join('');
+    else if (state.gameSession.game === 'decifrador') body.answer = state.decipherSlots.map(index => question.letters[index]).join('');
     else body.answer = data.get('answer');
     const answer = await api(`/games/sessions/${state.gameSession.session_id}/answer`, {method:'POST', body});
     state.gameFeedback = answer; render();
@@ -549,7 +556,7 @@
 
   async function nextQuestion() {
     if (state.gameIndex + 1 < state.gameSession.questions.length) {
-      clearTimeout(state.memoryTimer); state.gameIndex++; state.gameFeedback=null; state.decipherOrder=[]; state.decipherSelectedIndex=null; state.memoryPairs=[]; state.memoryMatched=new Set(); state.memorySelected=[]; state.memoryAttempts=0; state.memoryStartedAt=Date.now(); state.memoryLocked=false; render(); return;
+      clearTimeout(state.memoryTimer); state.gameIndex++; state.gameFeedback=null; state.decipherSlots=[]; state.decipherSelectedLetter=null; state.memoryPairs=[]; state.memoryMatched=new Set(); state.memorySelected=[]; state.memoryAttempts=0; state.memoryStartedAt=Date.now(); state.memoryLocked=false; render(); return;
     }
     const result = await api(`/games/sessions/${state.gameSession.session_id}/finish`, {method:'POST', body:{}});
     state.result = result; state.view='result'; render();
@@ -642,12 +649,17 @@
       else if (action === 'nav-games') { clearTimeout(state.memoryTimer); state.memoryLocked=false; state.view='games'; state.gameSession=null; render(); }
       else if (action === 'next-question') await nextQuestion();
       else if (action === 'decipher-letter') {
-        const position=Number(buttonEl.dataset.position);
-        if (state.decipherSelectedIndex === null) state.decipherSelectedIndex=position;
-        else if (state.decipherSelectedIndex === position) state.decipherSelectedIndex=null;
-        else {
-          [state.decipherOrder[state.decipherSelectedIndex],state.decipherOrder[position]]=[state.decipherOrder[position],state.decipherOrder[state.decipherSelectedIndex]];
-          state.decipherSelectedIndex=null;
+        const letterIndex=Number(buttonEl.dataset.letterIndex);
+        state.decipherSelectedLetter=state.decipherSelectedLetter===letterIndex?null:letterIndex;
+        render();
+      }
+      else if (action === 'decipher-slot') {
+        const slotIndex=Number(buttonEl.dataset.slotIndex);
+        if (state.decipherSelectedLetter !== null) {
+          placeDecipherLetter(state.decipherSelectedLetter,slotIndex);
+          state.decipherSelectedLetter=null;
+        } else if (state.decipherSlots[slotIndex] !== null) {
+          state.decipherSlots[slotIndex]=null;
         }
         render();
       }
@@ -665,35 +677,47 @@
     } catch (error) { if (state.loading) { state.loadError=error.message; render(); } toast(error.message); }
   }
 
+  function placeDecipherLetter(letterIndex, slotIndex) {
+    if (!Number.isInteger(letterIndex) || !Number.isInteger(slotIndex) ||
+        letterIndex<0 || letterIndex>=state.decipherSlots.length ||
+        slotIndex<0 || slotIndex>=state.decipherSlots.length) return;
+    const sourceSlot=state.decipherSlots.indexOf(letterIndex);
+    if (sourceSlot===slotIndex) return;
+    const displaced=state.decipherSlots[slotIndex];
+    state.decipherSlots[slotIndex]=letterIndex;
+    if (sourceSlot>=0) state.decipherSlots[sourceSlot]=displaced;
+  }
+
   function handleDecipherDragStart(event) {
-    const letter=event.target.closest('[data-action="decipher-letter"]');
+    const letter=event.target.closest('[data-letter-index]');
     if (!letter) return;
     event.dataTransfer.effectAllowed='move';
-    event.dataTransfer.setData('text/plain',letter.dataset.position);
+    event.dataTransfer.setData('text/plain',letter.dataset.letterIndex);
     letter.classList.add('dragging');
   }
 
   function handleDecipherDragOver(event) {
-    if (!event.target.closest('[data-action="decipher-letter"]')) return;
+    if (!event.target.closest('[data-decipher-drop]')) return;
     event.preventDefault();
     event.dataTransfer.dropEffect='move';
   }
 
   function handleDecipherDrop(event) {
-    const target=event.target.closest('[data-action="decipher-letter"]');
+    const target=event.target.closest('[data-decipher-drop]');
     if (!target) return;
     event.preventDefault();
-    const from=Number(event.dataTransfer.getData('text/plain'));
-    const to=Number(target.dataset.position);
-    if (!Number.isInteger(from) || !Number.isInteger(to) || from===to ||
-        from<0 || to<0 || from>=state.decipherOrder.length || to>=state.decipherOrder.length) return;
-    [state.decipherOrder[from],state.decipherOrder[to]]=[state.decipherOrder[to],state.decipherOrder[from]];
+    const letterIndex=Number(event.dataTransfer.getData('text/plain'));
+    if (!Number.isInteger(letterIndex) || letterIndex<0 || letterIndex>=state.decipherSlots.length) return;
+    if (target.dataset.decipherDrop==='bank') {
+      const sourceSlot=state.decipherSlots.indexOf(letterIndex);
+      if (sourceSlot>=0) state.decipherSlots[sourceSlot]=null;
+    } else placeDecipherLetter(letterIndex,Number(target.dataset.slotIndex));
     state.decipherSelectedIndex=null;
     render();
   }
 
   function handleDecipherDragEnd(event) {
-    event.target.closest('[data-action="decipher-letter"]')?.classList.remove('dragging');
+    event.target.closest('[data-letter-index]')?.classList.remove('dragging');
   }
 
   async function memoryCard(cardId) {

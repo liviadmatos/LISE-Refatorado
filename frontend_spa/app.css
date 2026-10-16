@@ -125,11 +125,17 @@ tbody tr:last-child td { border-bottom: 0; }
 .option input { margin-top: .25rem; accent-color: var(--green); }
 .letter-bank { display: flex; gap: .45rem; flex-wrap: wrap; margin: 1rem 0; }
 .letter { width: 2.3rem; height: 2.55rem; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: white; font-weight: 700; }
-.decipher-letters { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0; margin: 1.2rem 0 .6rem; list-style: none; }
-.decipher-letter { width: 2.8rem; height: 3rem; border: 1px solid #d9dfd4; border-radius: 9px; background: white; color: var(--ink); font-size: 1.1rem; font-weight: 700; cursor: grab; touch-action: manipulation; }
-.decipher-letter:hover { border-color: var(--sage); background: #f7faf5; }
-.decipher-letter.selected { border-color: var(--gold); background: #fbf6e9; box-shadow: 0 0 0 2px rgba(197,164,103,.18); }
-.decipher-letter.dragging { opacity: .4; cursor: grabbing; }
+.decipher-board { display: grid; gap: 1rem; margin: 1.2rem 0; }
+.decipher-board .field-label { margin: 0; }
+.decipher-bank { min-height: 4.5rem; padding: .6rem; border: 1px dashed #b9c7b6; border-radius: 12px; background: #f7f8f3; }
+.decipher-answer { padding: .8rem; border: 1px solid #d9dfd4; border-radius: 12px; background: #fff; }
+.decipher-letters, .decipher-slots { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: 0; margin: .55rem 0 0; list-style: none; }
+.decipher-letter, .decipher-slot { flex: 0 0 2.8rem; width: 2.8rem; height: 3rem; border: 1px solid #d9dfd4; border-radius: 9px; background: white; color: var(--ink); font-size: 1.1rem; font-weight: 700; touch-action: manipulation; }
+.decipher-letter { cursor: grab; }
+.decipher-letter:hover, .decipher-slot:not(.empty):hover { border-color: var(--sage); background: #f7faf5; }
+.decipher-slot.empty { border-style: dashed; background: #fbfaf5; cursor: default; }
+.decipher-letter.selected, .decipher-slot.selected { border-color: var(--gold); background: #fbf6e9; box-shadow: 0 0 0 2px rgba(197,164,103,.18); }
+.decipher-letter.dragging, .decipher-slot.dragging { opacity: .4; cursor: grabbing; }
 .memory-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: .65rem; margin: 1.2rem 0; }
 .memory-card { min-height: 86px; padding: .55rem; border: 1px solid #d9dfd4; border-radius: 12px; background: white; color: var(--ink); font-size: .86rem; }
 .memory-card.selected { border-color: var(--gold); background: #fbf6e9; }
