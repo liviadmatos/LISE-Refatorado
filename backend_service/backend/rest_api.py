@@ -15,6 +15,7 @@ from flask import Blueprint, abort, current_app, g, jsonify, request
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import HTTPException
+from werkzeug.security import check_password_hash, generate_password_hash
 from supabase_auth.errors import AuthApiError
 
 from .models import *
@@ -131,6 +132,7 @@ def _positive_int(value, name='identificador'):
 
 def _user_json(user):
     return dict(id=str(user.id_usuario), name=user.nome, email=user.email, role=user.perfil,
+                avatar=user.avatar or 'leaf',
                 last_access=aware(user.ultimo_acesso_em).isoformat() if user.ultimo_acesso_em else None)
 
 
@@ -159,8 +161,11 @@ def auth_login():
         _fail(400, 'Confira o e-mail e a senha.')
     user = None
     if current_app.config['DEMO_MODE']:
-        if password == 'LiseDemo123!':
-            user = g.db.scalar(select(Usuario).where(func.lower(Usuario.email) == email))
+        candidate = g.db.scalar(select(Usuario).where(func.lower(Usuario.email) == email))
+        if candidate and (
+                check_password_hash(candidate.demo_password_hash, password)
+                if candidate.demo_password_hash else password == 'LiseDemo123!'):
+            user = candidate
     else:
         try:
             response = _auth_client().auth.sign_in_with_password({'email': email, 'password': password})
@@ -243,6 +248,43 @@ def auth_logout():
 @_require_user
 def auth_me():
     return jsonify(user=_user_json(g.user))
+
+
+@api.patch('/auth/profile')
+@_require_user
+def auth_profile_update():
+    avatar = _body().get('avatar')
+    if avatar not in ('leaf', 'cell'):
+        _fail(400, 'Escolha um dos avatares disponíveis.')
+    g.user.avatar = avatar
+    g.db.commit()
+    return jsonify(user=_user_json(g.user))
+
+
+@api.post('/auth/change-password')
+@_require_user
+def auth_change_password():
+    data = _body()
+    current_password = data.get('current_password', '')
+    password = data.get('password', '')
+    if (not isinstance(current_password, str) or not 1 <= len(current_password) <= 128 or
+            not isinstance(password, str) or not 8 <= len(password) <= 128):
+        _fail(400, 'Informe sua senha atual e uma nova senha com ao menos 8 caracteres.')
+    if current_app.config['DEMO_MODE']:
+        valid = (check_password_hash(g.user.demo_password_hash, current_password)
+                 if g.user.demo_password_hash else current_password == 'LiseDemo123!')
+        if not valid:
+            _fail(401, 'A senha atual está incorreta.')
+        g.user.demo_password_hash = generate_password_hash(password)
+        g.db.commit()
+        return jsonify(message='Senha atualizada.')
+    try:
+        client = _auth_client()
+        client.auth.sign_in_with_password({'email': g.user.email, 'password': current_password})
+        client.auth.update_user({'password': password})
+    except AuthApiError:
+        _fail(400, 'Não foi possível atualizar a senha. Confira a senha atual e tente novamente.')
+    return jsonify(message='Senha atualizada.')
 
 
 def _favorite_ids(uid):
@@ -393,6 +435,14 @@ def _local_day_bounds(day):
     start = datetime.combine(day, time.min, tzinfo=TZ).astimezone(timezone.utc)
     end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=TZ).astimezone(timezone.utc)
     return start, end
+
+
+def _local_week_bounds(day):
+    week_start = day - timedelta(days=day.weekday())
+    week_end = week_start + timedelta(days=6)
+    start = datetime.combine(week_start, time.min, tzinfo=TZ).astimezone(timezone.utc)
+    end = datetime.combine(week_end + timedelta(days=1), time.min, tzinfo=TZ).astimezone(timezone.utc)
+    return week_start, week_end, start, end
 
 
 def _parse_date(value, field_name='data'):
@@ -699,7 +749,9 @@ def _class_metrics(class_row, daily_day):
     student_ids = [u.id_usuario for u, _ in students]
     points_all = {ident: 0 for ident in student_ids}
     points_today = {ident: 0 for ident in student_ids}
+    points_week = {ident: 0 for ident in student_ids}
     day_start, day_end = _local_day_bounds(daily_day)
+    week_start, week_end, week_start_utc, week_end_utc = _local_week_bounds(daily_day)
     def accumulate(statement, target):
         for ident, amount in g.db.execute(statement).all():
             target[ident] = target.get(ident, 0) + int(amount or 0)
@@ -709,6 +761,9 @@ def _class_metrics(class_row, daily_day):
         accumulate(select(Partida.fk_usuario, func.sum(Partida.xp)).where(
             Partida.fk_turma_trilha.in_(link_ids), Partida.respondida.is_(True),
             Partida.respondida_em >= day_start, Partida.respondida_em < day_end).group_by(Partida.fk_usuario), points_today)
+        accumulate(select(Partida.fk_usuario, func.sum(Partida.xp)).where(
+            Partida.fk_turma_trilha.in_(link_ids), Partida.respondida.is_(True),
+            Partida.respondida_em >= week_start_utc, Partida.respondida_em < week_end_utc).group_by(Partida.fk_usuario), points_week)
     # Jogos feitos dentro da turma, mas fora de uma trilha, entram no ranking da turma.
     standalone = select(Partida.fk_usuario, func.sum(Partida.xp)).join(
         GameQuestion, GameQuestion.fk_partida == Partida.id).join(
@@ -717,15 +772,21 @@ def _class_metrics(class_row, daily_day):
         Partida.respondida.is_(True)).group_by(Partida.fk_usuario)
     accumulate(standalone, points_all)
     accumulate(standalone.where(Partida.respondida_em >= day_start, Partida.respondida_em < day_end), points_today)
+    accumulate(standalone.where(Partida.respondida_em >= week_start_utc,
+                                Partida.respondida_em < week_end_utc), points_week)
     by_id = {u.id_usuario: u for u, _m in students}
     total_rank = [dict(user_id=str(ident), name=by_id[ident].nome, xp=points_all[ident], is_me=ident == uid)
                   for ident in student_ids]
     daily_rank = [dict(user_id=str(ident), name=by_id[ident].nome, xp=points_today[ident], is_me=ident == uid)
                   for ident in student_ids]
+    weekly_rank = [dict(user_id=str(ident), name=by_id[ident].nome, xp=points_week[ident], is_me=ident == uid)
+                   for ident in student_ids]
     total_rank.sort(key=lambda x: (-x['xp'], x['name'].casefold()))
     daily_rank.sort(key=lambda x: (-x['xp'], x['name'].casefold()))
+    weekly_rank.sort(key=lambda x: (-x['xp'], x['name'].casefold()))
     for index, row in enumerate(total_rank, 1): row['rank'] = index
     for index, row in enumerate(daily_rank, 1): row['rank'] = index
+    for index, row in enumerate(weekly_rank, 1): row['rank'] = index
     teacher_students = []
     if g.user.perfil == 'Professor':
         learning_summary = _bulk_class_learning_status(student_ids, links)
@@ -733,10 +794,12 @@ def _class_metrics(class_row, daily_day):
             last = aware(user.ultimo_acesso_em)
             teacher_students.append(dict(user_id=str(user.id_usuario), name=user.nome, email=user.email,
                                          total_xp=points_all.get(user.id_usuario, 0), daily_xp=points_today.get(user.id_usuario, 0),
+                                         weekly_xp=points_week.get(user.id_usuario, 0),
                                          last_access=last.astimezone(TZ).isoformat() if last else None,
                                          **learning_summary.get(user.id_usuario, dict(trail_status='Sem trilhas atribuídas', late_trails=0, pending_trails=0, assigned_trails=0))))
-        teacher_students.sort(key=lambda x: (-x['total_xp'], x['name'].casefold()))
-    return dict(total=total_rank, daily=daily_rank, day=daily_day.isoformat(),
+        teacher_students.sort(key=lambda x: (-x['weekly_xp'], x['name'].casefold()))
+    return dict(total=total_rank, daily=daily_rank, weekly=weekly_rank, day=daily_day.isoformat(),
+                week_start=week_start.isoformat(), week_end=week_end.isoformat(),
                 students=teacher_students)
 
 
@@ -774,7 +837,8 @@ def class_detail(class_id):
     metrics = _class_metrics(row, daily_day)
     result = dict(id=row.id_turma, name=row.nome, role=g.user.perfil, code=row.codigo if g.user.perfil == 'Professor' else None,
                   trails=trails, leaderboard=metrics['total'], daily_leaderboard=metrics['daily'],
-                  daily_date=metrics['day'])
+                  daily_date=metrics['day'], weekly_leaderboard=metrics['weekly'],
+                  week_start=metrics['week_start'], week_end=metrics['week_end'])
     if g.user.perfil == 'Professor':
         result['students'] = metrics['students']
         result['assessment_results'] = _assessment_results_for_class(row.id_turma)
@@ -816,7 +880,8 @@ def class_student_detail(class_id, student_id):
     return jsonify(student=dict(user_id=str(user.id_usuario), name=user.nome, email=user.email,
                                 last_access=aware(user.ultimo_acesso_em).astimezone(TZ).isoformat() if user.ultimo_acesso_em else None,
                                 total_xp=summary['total_xp'] if summary else 0,
-                                daily_xp=summary['daily_xp'] if summary else 0),
+                                daily_xp=summary['daily_xp'] if summary else 0,
+                                weekly_xp=summary['weekly_xp'] if summary else 0),
                    class_id=class_row.id_turma, class_name=class_row.nome, trails=trails)
 
 
@@ -879,8 +944,11 @@ def catalog_terms():
     if area:
         query = query.join(Area).where(Area.nome == area)
     if search:
-        query = query.where(func.lower(Termo.palavra_completa).contains(search.lower(), autoescape=True))
-    rows = g.db.scalars(query.order_by(Termo.palavra_completa).limit(500)).all()
+        query = query.where(or_(
+            func.lower(Termo.palavra_completa).contains(search.lower(), autoescape=True),
+            func.lower(Termo.definicao_biologica).contains(search.lower(), autoescape=True),
+        ))
+    rows = g.db.scalars(query.order_by(Termo.palavra_completa).limit(100)).all()
     return jsonify(terms=_term_data(rows, g.user.id_usuario), count=len(rows))
 
 
@@ -918,6 +986,36 @@ def trail_create():
         link.data_limite = due_date
     g.db.commit()
     return jsonify(trail=_trail_data(trail, g.user.id_usuario), message='Trilha criada.'), 201
+
+
+@api.post('/trails/<int:trail_id>/terms')
+@_teacher
+def trail_add_terms(trail_id):
+    trail = owned_trail(g.db, g.user.id_usuario, trail_id)
+    term_ids = _body().get('term_ids', [])
+    if not isinstance(term_ids, list):
+        _fail(400, 'Informe os termos selecionados.')
+    ids = list(dict.fromkeys(_positive_int(value, 'termo') for value in term_ids))
+    if not ids or len(ids) > 500:
+        _fail(400, 'Selecione ao menos um termo para a trilha.')
+    classes = g.db.scalars(select(Turma).join(TurmaTrilha, TurmaTrilha.fk_turma == Turma.id_turma)
+                           .where(TurmaTrilha.fk_trilha == trail.id_trilha)).all()
+    for ident in ids:
+        term = visible_term(g.db, g.user.id_usuario, ident)
+        if term.criado_pelo_professor:
+            if term.criado_por != g.user.id_usuario:
+                _fail(403, 'A trilha não pode incluir um termo privado de outro professor.')
+            for class_row in classes:
+                shared = g.db.scalar(select(TermoTurma.id).where(
+                    TermoTurma.fk_termo == ident, TermoTurma.fk_turma == class_row.id_turma))
+                if not shared:
+                    g.db.add(TermoTurma(fk_termo=ident, fk_turma=class_row.id_turma))
+        existing = g.db.scalar(select(TrilhaTermo.id).where(
+            TrilhaTermo.fk_trilha == trail.id_trilha, TrilhaTermo.fk_termo == ident))
+        if not existing:
+            g.db.add(TrilhaTermo(fk_trilha=trail.id_trilha, fk_termo=ident))
+    g.db.commit()
+    return jsonify(trail=_trail_data(trail, g.user.id_usuario), message='Termos adicionados à trilha.')
 
 
 @api.delete('/trails/<int:trail_id>')
@@ -1416,8 +1514,19 @@ def _clean_radicals(term_view):
     return [r for r in term_view.get('radical_list', []) if r.get('text', '').strip() and r.get('meaning', '').strip()]
 
 
-def _bioquiz_questions(views, count, requested_mode):
+def _preferred_sample(candidates, priority_ids, count, rng):
+    if not priority_ids:
+        return rng.sample(candidates, min(count, len(candidates)))
+    priority = [item for item in candidates if item in priority_ids]
+    remainder = [item for item in candidates if item not in priority_ids]
+    rng.shuffle(priority)
+    rng.shuffle(remainder)
+    return (priority + remainder)[:count]
+
+
+def _bioquiz_questions(views, count, requested_mode, priority_ids=None):
     rng = random.SystemRandom()
+    priority_ids = priority_ids or set()
     valid_modes = ('termo_definicao', 'definicao_termo', 'radical_significado',
                    'significado_radical', 'misto')
     requested_mode = requested_mode if requested_mode in valid_modes else 'misto'
@@ -1435,7 +1544,8 @@ def _bioquiz_questions(views, count, requested_mode):
         if mode == 'termo_definicao':
             candidates = [v for v in term_pool if sum(t['definition'] == v['definition'] for t in term_pool) == 1]
             if len(candidates) < 2: return None
-            correct = rng.choice(candidates)
+            unseen = [v for v in candidates if v['id'] in priority_ids]
+            correct = rng.choice(unseen or candidates)
             wrong = rng.sample([v for v in candidates if v['id'] != correct['id']], min(3, len(candidates)-1))
             options = [{'id': f"d:{v['id']}", 'text': v['definition']} for v in [correct, *wrong]]
             answer_id = f"d:{correct['id']}"
@@ -1444,7 +1554,8 @@ def _bioquiz_questions(views, count, requested_mode):
         elif mode == 'definicao_termo':
             candidates = [v for v in term_pool if sum(t['name'].casefold() == v['name'].casefold() for t in term_pool) == 1]
             if len(candidates) < 2: return None
-            correct = rng.choice(candidates)
+            unseen = [v for v in candidates if v['id'] in priority_ids]
+            correct = rng.choice(unseen or candidates)
             wrong = rng.sample([v for v in candidates if v['id'] != correct['id']], min(3, len(candidates)-1))
             options = [{'id': f"t:{v['id']}", 'text': v['name']} for v in [correct, *wrong]]
             answer_id = f"t:{correct['id']}"
@@ -1452,6 +1563,9 @@ def _bioquiz_questions(views, count, requested_mode):
             term_ids = [correct['id']]
         else:
             candidates = [r for r in radical_pool.values() if r['name'] and r['meaning']]
+            unseen = [r for r in candidates if set(r['term_ids']) & priority_ids]
+            if unseen:
+                candidates = unseen
             key = 'meaning' if mode == 'radical_significado' else 'name'
             if len({r[key].casefold() for r in candidates}) < 2: return None
             correct = rng.choice(candidates)
@@ -1461,6 +1575,8 @@ def _bioquiz_questions(views, count, requested_mode):
             answer_id = f"r:{correct['id']}"
             prompt = correct['name'] if mode == 'radical_significado' else correct['meaning']
             term_ids = list(dict.fromkeys(correct['term_ids']))
+            term_ids = ([ident for ident in term_ids if ident in priority_ids] +
+                        [ident for ident in term_ids if ident not in priority_ids])
         rng.shuffle(options)
         return (term_ids[0], answer_id, dict(kind='bioquiz', mode=mode, prompt=prompt,
                 options=options, _coverage_terms=term_ids, _correct_answer=next(o['text'] for o in options if o['id'] == answer_id)))
@@ -1490,14 +1606,15 @@ def _bioquiz_questions(views, count, requested_mode):
     return questions
 
 
-def _make_questions(game, views, source_id=None, count=10, mode='termo_definicao'):
+def _make_questions(game, views, source_id=None, count=10, mode='termo_definicao', priority_ids=None):
     rng = random.SystemRandom()
+    priority_ids = priority_ids or set()
     by_id = {v['id']: v for v in views}
     ids = list(by_id)
     if game == 'bioquiz':
-        return _bioquiz_questions(views, count, mode)
+        return _bioquiz_questions(views, count, mode, priority_ids)
     if game == 'familia_palavras':
-        pool = rng.sample(ids, min(20, len(ids)))
+        pool = _preferred_sample(ids, priority_ids, 20, rng)
         counts = {}
         for ident in pool:
             for radical in _clean_radicals(by_id[ident]): counts.setdefault(radical['radical_id'], []).append(ident)
@@ -1507,7 +1624,8 @@ def _make_questions(game, views, source_id=None, count=10, mode='termo_definicao
         questions = []
         for rid, correct_ids in eligible[:min(5, count)]:
             radical = next(r for term_id in correct_ids for r in _clean_radicals(by_id[term_id]) if r['radical_id'] == rid)
-            target = rng.choice(correct_ids)
+            unseen_targets = [ident for ident in correct_ids if ident in priority_ids]
+            target = rng.choice(unseen_targets or correct_ids)
             options = [dict(id=ident, name=by_id[ident]['name']) for ident in pool]
             rng.shuffle(options)
             questions.append((target, sorted(set(correct_ids)), dict(
@@ -1522,7 +1640,7 @@ def _make_questions(game, views, source_id=None, count=10, mode='termo_definicao
         requested = int(count)
         pair_count = min((6, 8, 10), key=lambda option: abs(option - requested))
         if mode == 'termo_definicao':
-            for ident in rng.sample(ids, min(pair_count, len(ids))):
+            for ident in _preferred_sample(ids, priority_ids, pair_count, rng):
                 pairs.append((by_id[ident]['name'], by_id[ident]['definition'], ident))
         else:
             unique = {}
@@ -1530,7 +1648,16 @@ def _make_questions(game, views, source_id=None, count=10, mode='termo_definicao
                 for rad in _clean_radicals(by_id[ident]):
                     entry = unique.setdefault(rad['radical_id'], dict(text=rad['text'], meaning=rad['meaning'], term_ids=[]))
                     entry['term_ids'].append(ident)
-            selected_roots = rng.sample(list(unique.items()), min(pair_count, len(unique)))
+            root_items = list(unique.items())
+            if priority_ids:
+                preferred_roots = [item for item in root_items if set(item[1]['term_ids']) & priority_ids]
+                other_roots = [item for item in root_items if not set(item[1]['term_ids']) & priority_ids]
+                rng.shuffle(preferred_roots)
+                selected_roots = preferred_roots[:pair_count]
+                if len(selected_roots) < pair_count:
+                    selected_roots.extend(rng.sample(other_roots, min(pair_count-len(selected_roots), len(other_roots))))
+            else:
+                selected_roots = rng.sample(root_items, min(pair_count, len(root_items)))
             for radical_id, entry in selected_roots:
                 pairs.append((entry['text'], entry['meaning'], entry['term_ids'][0]))
                 memory_radical_ids.append(radical_id)
@@ -1551,7 +1678,7 @@ def _make_questions(game, views, source_id=None, count=10, mode='termo_definicao
                                              instruction='Encontre todos os pares.'))]
     if game == 'decifrador':
         questions = []
-        for ident in rng.sample(ids, min(max(1, count), len(ids))):
+        for ident in _preferred_sample(ids, priority_ids, max(1, count), rng):
             term = by_id[ident]
             letters = list(term['name'].upper().replace(' ', ''))
             rng.shuffle(letters)
@@ -1574,7 +1701,9 @@ def game_start():
         count = 10
     rows, source_type, source_id, class_id, link_id = _source_terms(g.user, data)
     views = _term_data(rows, g.user.id_usuario)
-    questions = _make_questions(game, views, source_id, count, str(data.get('mode', 'termo_definicao')))
+    priority_ids = set(progress_detail(g.db, g.user.id_usuario, g.db.get(TurmaTrilha, link_id))['missing']) if link_id else set()
+    questions = _make_questions(game, views, source_id, count, str(data.get('mode', 'termo_definicao')),
+                                priority_ids)
     if not questions: _fail(400, 'Não há perguntas suficientes nessa seleção.')
     session_id = str(uuid.uuid4())
     game_session = GameSession(id=session_id, fk_usuario=g.user.id_usuario, fk_turma=class_id,
@@ -1727,9 +1856,7 @@ def game_answer(session_id):
         question.payload = {**question.payload, '_last_answer': answer if isinstance(answer, list) else []}
     if session_row.fk_turma_trilha:
         coverage = question.payload.get('_coverage_terms', [])
-        if partida.jogo == 'familia_palavras' or (
-                partida.jogo == 'bioquiz' and
-                question.payload.get('mode') in ('radical_significado', 'significado_radical')):
+        if partida.jogo == 'familia_palavras':
             _mark_practiced_terms(g.user.id_usuario, session_row.fk_turma_trilha, coverage)
         else:
             _mark_practiced_terms(g.user.id_usuario, session_row.fk_turma_trilha, [partida.fk_termo])

@@ -47,6 +47,7 @@ a { color: inherit; text-decoration: none; }
 .user-chip { border-top: 1px solid var(--line); padding: 1rem .4rem .2rem; display: grid; gap: .15rem; }
 .user-chip strong { font-size: .92rem; }
 .user-chip small { color: var(--muted); }
+.avatar-badge { display: grid; place-items: center; width: 2rem; height: 2rem; margin-bottom: .25rem; border-radius: 50%; background: #edf2eb; font-size: 1.15rem; }
 .main-column { min-width: 0; }
 .topbar { height: 74px; display: flex; justify-content: space-between; align-items: center; padding: 0 clamp(1rem, 4vw, 3.3rem); border-bottom: 1px solid var(--line); background: rgba(255,254,250,.86); }
 .topbar small { color: var(--muted); }
@@ -168,6 +169,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .content { padding: 1.1rem; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
+  .profile-fields { grid-template-columns: 1fr; }
   .section-heading { align-items: flex-start; flex-direction: column; }
   .memory-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .card { border-radius: 16px; padding: 1.05rem; }
@@ -186,6 +188,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .sidebar-collapsed .brand-name, .sidebar-collapsed .nav-button > span:last-child,
 .sidebar-collapsed .side-bottom .user-chip, .sidebar-collapsed .side-bottom .btn { display: none; }
 .sidebar-collapsed .nav-button { justify-content: center; padding-inline: .4rem; }
+.sidebar-collapsed .side-bottom .profile-shortcut { display: flex; justify-content: center; width: 100%; padding: .55rem; }
+.sidebar-collapsed .profile-shortcut-label { display: none; }
+.profile-shortcut-icon { display: none; }
+.sidebar-collapsed .profile-shortcut-icon { display: inline; }
 .nav-icon { font-size: 1.35rem; font-weight: 500; letter-spacing: 0; }
 .sidebar-toggle { white-space: nowrap; }
 .loading-card { display: grid; gap: .8rem; max-width: 680px; min-height: 180px; align-content: center; }
@@ -201,6 +207,25 @@ tbody tr:last-child td { border-bottom: 0; }
 .optional-share summary { cursor: pointer; color: var(--green-dark); font-weight: 700; }
 .source-link { display: inline-flex; align-items: center; gap: .25rem; color: var(--green-dark); font-weight: 700; text-decoration: underline; text-decoration-color: #b8c8b5; text-underline-offset: .18em; }
 .source-link:hover { color: var(--green); text-decoration-color: currentColor; }
+.profile-card { max-width: 760px; }
+.profile-identity { display: flex; align-items: center; gap: 1rem; padding-bottom: 1.2rem; border-bottom: 1px solid var(--line); }
+.profile-identity h2 { margin: 0; font: 600 1.5rem "Playfair Display", serif; }
+.profile-identity p { margin: .25rem 0 0; }
+.profile-avatar { display: grid; place-items: center; width: 4.5rem; height: 4.5rem; flex: 0 0 auto; border-radius: 50%; background: #edf2eb; font-size: 2.4rem; }
+.avatar-options { display: flex; flex-wrap: wrap; gap: .8rem; }
+.avatar-option { display: grid; justify-items: center; gap: .4rem; min-width: 112px; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: 14px; color: var(--ink); background: white; }
+.avatar-option > span { font-size: 2rem; }
+.avatar-option.selected { border-color: var(--green); box-shadow: 0 0 0 3px rgba(74,93,78,.14); background: #f5f8f3; }
+.profile-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .8rem; margin-top: 1.4rem; }
+.profile-fields input[readonly] { background: #f6f6f1; color: var(--muted); }
+.password-display { display: flex; justify-content: space-between; align-items: center; gap: .8rem; min-height: 46px; }
+.password-display > span { letter-spacing: .16em; color: var(--muted); }
+.password-change-form { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.term-search-hint { margin: .8rem; }
+.term-selection-inputs { display: none; }
+.selected-term-list { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-top: .75rem; }
+.selected-term-chip { display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .55rem; border-radius: 999px; background: #edf2eb; color: var(--green-dark); font-size: .82rem; font-weight: 600; }
+.selected-term-chip button { border: 0; padding: 0 .1rem; color: inherit; background: transparent; font-size: 1.1rem; line-height: 1; }
 @keyframes skeleton-shimmer { to { background-position: -200% 0; } }
 .game-icon { font-family: "Inter", sans-serif; font-size: .95rem !important; font-weight: 800; color: var(--green-dark); letter-spacing: .04em; }
 .trail-progress { display: flex; align-items: center; justify-content: space-between; gap: .7rem; margin: .9rem 0 .55rem; color: var(--muted); font-size: .84rem; }

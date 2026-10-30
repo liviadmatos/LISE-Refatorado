@@ -73,10 +73,11 @@ No projeto LISE que já está conectado, as migrações `lise_curadoria_etimolog
 
 Os arquivos `20260918171455_lise_flask_integrado.sql`, `20261002140000_lise_frontend_api.sql` e `20261002160000_lise_assessments_and_deadlines.sql` documentam a instalação base e as versões anteriores. Só devem ser aplicados, em ordem de nome, numa base nova ou num destino que ainda não tenha essas estruturas, com backup e revisão do esquema. Na base LISE atual, o necessário já está aplicado.
 
-As duas migrações desta refatoração são:
+As migrações desta refatoração são:
 
 - `20261016161530_lise_curadoria_etimologica.sql`: acrescenta metadados e estados de validação, preserva os termos antigos como pendentes e registra o subconjunto curado com fontes e justificativas.
 - `20261016161850_lise_taxonomia_elementos.sql`: corrige a classificação de elementos de composição aprovados.
+- `20261030140000_lise_profiles.sql`: adiciona o avatar selecionável e o hash de senha usado somente na demonstração local. Aplique esta migração antes de publicar a versão com perfis.
 
 ## Referências oficiais
 

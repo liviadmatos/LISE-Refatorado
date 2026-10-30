@@ -21,6 +21,8 @@ class Usuario(Base):
     perfil = Column(String(20), nullable=False)
     criado_em = Column(DateTime(timezone=True), default=utcnow)
     ultimo_acesso_em = Column(DateTime(timezone=True))
+    avatar = Column(String(16), nullable=False, default='leaf')
+    demo_password_hash = Column(String(255))
 
 
 class Area(Base):

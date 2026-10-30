@@ -1,5 +1,6 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
@@ -7,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app import create_app
 from backend.demo import ALUNO_ID, seed
-from backend.models import (AvaliacaoQuestao, Base, GameSession, Partida, Turma,
-                            TurmaTrilha, Usuario)
+from backend.models import (AvaliacaoQuestao, Base, GameSession, Partida, Progresso,
+                            Turma, TurmaTrilha, Usuario)
 
 
 @pytest.fixture
@@ -259,3 +260,122 @@ def test_teacher_registration_does_not_need_invite_code():
     payload = {'name': 'Professora', 'email': 'prof@lise.test', 'password': 'SenhaForte123', 'role': 'PROFESSOR'}
     response = client.post('/api/v1/auth/register', json=payload)
     assert response.status_code == 201
+
+
+def test_profile_avatar_and_demo_password_are_editable(app):
+    client = app.test_client()
+    headers = login(client)
+    profile = client.get('/api/v1/auth/me', headers=headers)
+    assert profile.json['user']['avatar'] == 'leaf'
+
+    invalid_avatar = client.patch('/api/v1/auth/profile', headers=headers, json={'avatar': 'upload'})
+    assert invalid_avatar.status_code == 400
+    changed_avatar = client.patch('/api/v1/auth/profile', headers=headers, json={'avatar': 'cell'})
+    assert changed_avatar.status_code == 200
+    assert changed_avatar.json['user']['avatar'] == 'cell'
+
+    wrong_password = client.post('/api/v1/auth/change-password', headers=headers,
+                                json={'current_password': 'wrong', 'password': 'SenhaNova123'})
+    assert wrong_password.status_code == 401
+    changed_password = client.post('/api/v1/auth/change-password', headers=headers,
+                                   json={'current_password': 'LiseDemo123!', 'password': 'SenhaNova123'})
+    assert changed_password.status_code == 200
+    assert client.post('/api/v1/auth/login', json={
+        'email': 'aluno@lise.demo', 'password': 'SenhaNova123'}).status_code == 200
+    assert client.post('/api/v1/auth/login', json={
+        'email': 'aluno@lise.demo', 'password': 'LiseDemo123!'}).status_code == 401
+
+
+def test_weekly_class_ranking_only_counts_current_week_activities(app):
+    teacher = app.test_client()
+    teacher_headers = login(teacher, 'professor@lise.demo')
+    trail = teacher.post('/api/v1/trails', headers=teacher_headers, json={
+        'name': 'Atividades semanais', 'term_ids': [1], 'class_ids': [1]})
+    assert trail.status_code == 201
+    with Session(app.extensions['engine']) as db:
+        assignment_id = db.scalar(select(TurmaTrilha.id).where(
+            TurmaTrilha.fk_trilha == trail.json['trail']['id']))
+        today = datetime.now(ZoneInfo('America/Sao_Paulo')).date()
+        monday = today - timedelta(days=today.weekday())
+        week_start = datetime.combine(monday, time.min, tzinfo=ZoneInfo('America/Sao_Paulo'))
+        timestamps = [
+            (week_start + timedelta(minutes=1), 10),
+            (week_start + timedelta(days=6, hours=23, minutes=59), 5),
+            (week_start + timedelta(days=7), 50),
+            (week_start - timedelta(seconds=1), 25),
+        ]
+        db.add_all([
+            Partida(id=str(uuid.uuid4()), fk_usuario=ALUNO_ID, fk_termo=1,
+                    fk_turma_trilha=assignment_id, jogo='decifrador',
+                    resposta_esperada='x', respondida=True, xp=xp,
+                    respondida_em=played_at.astimezone(timezone.utc))
+            for played_at, xp in timestamps
+        ])
+        db.commit()
+
+    student = app.test_client()
+    student_headers = login(student)
+    response = student.get('/api/v1/classes/1', headers=student_headers)
+    assert response.status_code == 200
+    assert response.json['week_start'] == monday.isoformat()
+    row = next(item for item in response.json['weekly_leaderboard'] if item['user_id'] == ALUNO_ID)
+    assert row['xp'] == 15
+
+
+def test_trail_games_prioritize_terms_not_played_yet(app):
+    teacher = app.test_client()
+    teacher_headers = login(teacher, 'professor@lise.demo')
+    trail = teacher.post('/api/v1/trails', headers=teacher_headers, json={
+        'name': 'Prioridade de termos', 'term_ids': [1, 2, 3], 'class_ids': [1]})
+    assert trail.status_code == 201
+    with Session(app.extensions['engine']) as db:
+        assignment_id = db.scalar(select(TurmaTrilha.id).where(
+            TurmaTrilha.fk_trilha == trail.json['trail']['id']))
+        db.add(Progresso(fk_usuario=ALUNO_ID, fk_turma_trilha=assignment_id,
+                         fk_termo=1, jogado=True, acertou=False))
+        db.commit()
+
+    student = app.test_client()
+    headers = login(student)
+    started = student.post('/api/v1/games/sessions', headers=headers, json={
+        'game': 'decifrador', 'source_type': 'trail', 'source_id': assignment_id,
+        'question_count': 2})
+    assert started.status_code == 201, started.json
+    question_ids = [question['id'] for question in started.json['questions']]
+    with Session(app.extensions['engine']) as db:
+        term_ids = set(db.scalars(select(Partida.fk_termo).where(Partida.id.in_(question_ids))))
+    assert term_ids == {2, 3}
+
+
+def test_term_catalog_search_matches_definitions_and_collection_can_add_terms(app):
+    student = app.test_client()
+    headers = login(student)
+    found = student.get('/api/v1/catalog/terms?search=ecossistemas', headers=headers)
+    assert found.status_code == 200
+    assert any(term['id'] == 2 for term in found.json['terms'])
+    collection = student.post('/api/v1/collections', headers=headers,
+                              json={'name': 'Busca ativa', 'term_ids': [1]})
+    assert collection.status_code == 201
+    added = student.post(f"/api/v1/collections/{collection.json['collection']['id']}/terms",
+                         headers=headers, json={'term_ids': [2]})
+    assert added.status_code == 200
+    assert {term['id'] for term in added.json['collection']['terms']} == {1, 2}
+
+
+def test_teacher_can_add_terms_to_an_existing_trail(app):
+    teacher = app.test_client()
+    teacher_headers = login(teacher, 'professor@lise.demo')
+    trail = teacher.post('/api/v1/trails', headers=teacher_headers, json={
+        'name': 'Trilha editável', 'term_ids': [1]})
+    assert trail.status_code == 201
+    trail_id = trail.json['trail']['id']
+    added = teacher.post(f'/api/v1/trails/{trail_id}/terms', headers=teacher_headers,
+                         json={'term_ids': [2, 3]})
+    assert added.status_code == 200
+    assert set(added.json['trail']['terms']) == {1, 2, 3}
+
+    student = app.test_client()
+    student_headers = login(student)
+    forbidden = student.post(f'/api/v1/trails/{trail_id}/terms', headers=student_headers,
+                             json={'term_ids': [4]})
+    assert forbidden.status_code == 403

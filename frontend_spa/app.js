@@ -14,6 +14,8 @@
     memoryMatched: new Set(), memoryAttempts: 0, memoryStartedAt: 0, memoryLocked: false, memoryTimer: null, result: null, busy: false,
     studentDetail: null, assessmentTarget: null, assessmentSession: null, assessmentIndex: 0,
     assessmentAnswer: null, assessmentResult: null,
+    profilePasswordEdit: false, selectedTermIds: new Set(), selectedTermInfo: new Map(), catalogTerms: [], catalogSearchTimer: null,
+    catalogSearchSequence: 0, termSelectionTarget: null, existingTermIds: new Set(),
     sidebarCollapsed: localStorage.getItem('lise_sidebar_collapsed') === 'true'
   };
 
@@ -94,10 +96,10 @@
         <nav class="nav-list" aria-label="Navegação principal">
           ${nav.map(([view, icon, label]) => `<button class="nav-button ${state.view === view || (view==='classes' && state.view==='class') ? 'active' : ''}" data-action="navigate" data-view="${view}" aria-label="${label}" title="${label}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`).join('')}
         </nav>
-        <div class="side-bottom"><div class="user-chip"><strong>${esc(state.user.name)}</strong><small>${student ? 'Estudante' : 'Professor'}</small></div><button class="btn btn-plain btn-block" data-action="logout">Sair da conta</button></div>
+        <div class="side-bottom"><div class="user-chip"><span class="avatar-badge">${state.user.avatar === 'cell' ? '🧬' : '🌱'}</span><strong>${esc(state.user.name)}</strong><small>${student ? 'Estudante' : 'Professor'}</small></div><button class="btn btn-soft btn-block profile-shortcut" data-action="open-profile" aria-label="Meu perfil"><span class="profile-shortcut-icon">${state.user.avatar === 'cell' ? '🧬' : '🌱'}</span><span class="profile-shortcut-label">Meu perfil</span></button><button class="btn btn-plain btn-block" data-action="logout">Sair da conta</button></div>
       </aside>
       <div class="main-column">
-        <header class="topbar"><div class="topbar-start"><div class="brand"><span class="brand-mark">L</span><span>LISE</span></div></div><div class="topbar-user"><small>${esc(state.user.name)} · ${student ? 'Aluno' : 'Professor'}</small>${button('Sair','logout','btn-plain btn-small')}</div></header>
+        <header class="topbar"><div class="topbar-start"><div class="brand"><span class="brand-mark">L</span><span>LISE</span></div></div><div class="topbar-user"><small>${esc(state.user.name)} · ${student ? 'Aluno' : 'Professor'}</small>${button('Meu perfil','open-profile','btn-soft btn-small')}${button('Sair','logout','btn-plain btn-small')}</div></header>
         <main class="content">${content}</main>
       </div>
     </div>`;
@@ -123,6 +125,17 @@
       </div></section></div>`;
   }
 
+  function renderProfile() {
+    const avatars = [['leaf', '🌱', 'Folha'], ['cell', '🧬', 'Célula']];
+    return `<div class="section-heading"><div><div class="eyebrow">Sua conta</div><h1 class="page-title">Meu perfil</h1><p>Veja seus dados e personalize seu avatar.</p></div></div>
+      <section class="card profile-card"><div class="profile-identity"><span class="profile-avatar">${state.user.avatar === 'cell' ? '🧬' : '🌱'}</span><div><h2>${esc(state.user.name)}</h2><p>${esc(state.user.email)}</p></div></div>
+      <div class="split-heading"><h2>Foto de perfil</h2><span class="muted small">Escolha um dos avatares disponíveis</span></div>
+      <div class="avatar-options">${avatars.map(([id, icon, label]) => `<button type="button" class="avatar-option ${state.user.avatar === id ? 'selected' : ''}" data-action="select-avatar" data-avatar="${id}" aria-pressed="${state.user.avatar === id}"><span>${icon}</span><strong>${label}</strong></button>`).join('')}</div>
+      <div class="profile-fields"><div class="field"><label for="profile-name">Nome</label><input id="profile-name" value="${esc(state.user.name)}" readonly></div><div class="field"><label for="profile-email">E-mail</label><input id="profile-email" type="email" value="${esc(state.user.email)}" readonly></div>
+      <div class="field"><label>Senha</label><div class="password-display"><span aria-label="Senha oculta">••••••••••</span>${button('Alterar senha','edit-profile-password','btn-soft btn-small')}</div></div></div>
+      ${state.profilePasswordEdit ? `<form class="password-change-form" data-form="change-password"><div class="field"><label>Senha atual</label><input name="current_password" type="password" autocomplete="current-password" required></div><div class="field"><label>Nova senha</label><input name="password" type="password" minlength="8" autocomplete="new-password" required></div><div class="field"><label>Confirme a nova senha</label><input name="confirm" type="password" minlength="8" autocomplete="new-password" required></div><div class="card-actions"><button class="btn btn-primary" type="submit">Salvar nova senha</button><button class="btn btn-plain" type="button" data-action="cancel-password-edit">Cancelar</button></div></form>` : ''}</section>`;
+  }
+
   function renderDashboard() {
     if (!state.dashboard) return loadingCard();
     const d = state.dashboard;
@@ -134,14 +147,14 @@
         <div class="split-heading"><h2>Minhas turmas</h2></div>
         ${classes.length ? `<div class="grid grid-3">${classes.map(c => `<article class="card"><div class="card-top"><span class="chip">${esc(c.code)}</span><span class="muted small">${c.alunos?.length || 0} alunos</span></div><h3>${esc(c.name)}</h3><p>${c.trilhas?.length || 0} trilhas atribuídas</p><div class="card-actions">${button('Ver turma →', 'open-class', 'btn-primary btn-small', `data-id="${c.id}"`)}</div></article>`).join('')}</div>` : empty('Você ainda não tem turmas', 'Crie uma turma para compartilhar o código com seus alunos.')}
         <div class="split-heading"><h2>Minhas trilhas</h2><span class="muted small">Apagar uma trilha também remove suas atribuições.</span></div>
-        ${trails.length ? `<div class="grid grid-2">${trails.map(t => `<article class="card"><div class="card-top"><span class="chip gold">${esc(t.area || 'Todas as áreas')}</span>${button('Apagar', 'delete-trail', 'btn-danger btn-small', `data-id="${t.id}"`)}</div><h3>${esc(t.name)}</h3><p>${esc(t.description || 'Sem descrição')} · ${t.terms?.length || 0} termos</p></article>`).join('')}</div>` : empty('Nenhuma trilha criada', 'Crie uma trilha e escolha os termos cadastrados que deseja incluir.')}`;
+        ${trails.length ? `<div class="grid grid-2">${trails.map(t => `<article class="card"><div class="card-top"><span class="chip gold">${esc(t.area || 'Todas as áreas')}</span>${button('Apagar', 'delete-trail', 'btn-danger btn-small', `data-id="${t.id}"`)}</div><h3>${esc(t.name)}</h3><p>${esc(t.description || 'Sem descrição')} · ${t.terms?.length || 0} termos</p><div class="card-actions">${button('Adicionar termos','add-trail-terms','btn-soft btn-small',`data-id="${t.id}" data-name="${esc(t.name)}"`)}</div></article>`).join('')}</div>` : empty('Nenhuma trilha criada', 'Crie uma trilha e escolha os termos cadastrados que deseja incluir.')}`;
     }
     const classes = d.classes || [];
     const cols = d.collections || [];
     return `<div class="section-heading"><div><div class="eyebrow">Sua área de estudos</div><h1 class="page-title">Olá, ${esc(state.user.name.split(' ')[0])}!</h1><p>Explore palavras, monte suas coleções e pratique no seu ritmo.</p></div><div class="card-actions">${button('Criar coleção', 'new-collection')} ${button('Criar palavra', 'new-student-term', 'btn-soft')}</div></div>
       <div class="grid grid-4"><div class="stat-card"><strong>${d.stats?.xp || 0}</strong><span>XP</span></div><div class="stat-card"><strong>${d.stats?.jogadas || 0}</strong><span>Jogadas</span></div><div class="stat-card"><strong>${d.stats?.streak || 0}</strong><span>Dias seguidos</span></div><div class="stat-card"><strong>${classes.length}</strong><span>Turmas</span></div></div>
       <div class="split-heading"><h2>Minhas turmas</h2>${button('Entrar com código', 'join-class', 'btn-plain btn-small')}</div>
-      ${classes.length ? `<div class="grid grid-3">${classes.map(c => `<article class="card"><span class="chip">Turma</span><h3>${esc(c.name)}</h3><p>Abra a turma para ver atividades, trilhas e o ranking de XP.</p><div class="card-actions">${button('Entrar na turma →', 'open-class', 'btn-primary btn-small', `data-id="${c.id}"`)}</div></article>`).join('')}</div>` : empty('Você ainda não entrou em uma turma', 'Peça o código ao professor e entre para acompanhar o ranking e as atividades da turma.')}
+      ${classes.length ? `<div class="grid grid-3">${classes.map(c => `<article class="card"><span class="chip">Turma</span><h3>${esc(c.name)}</h3><p>Abra a turma para ver atividades, trilhas e o ranking semanal de XP.</p><div class="card-actions">${button('Entrar na turma →', 'open-class', 'btn-primary btn-small', `data-id="${c.id}"`)}</div></article>`).join('')}</div>` : empty('Você ainda não entrou em uma turma', 'Peça o código ao professor e entre para acompanhar as atividades da turma.')}
       <div class="split-heading"><h2>Minhas coleções</h2>${button('Ver coleções', 'navigate', 'btn-plain btn-small', 'data-view="collections"')}</div>
       ${cols.length ? `<div class="grid grid-3">${cols.slice(0,3).map(c => `<article class="card"><span class="chip gold">${c.terms?.length || 0} termos</span><h3>${esc(c.name)}</h3><div class="card-actions">${button('Abrir', 'open-collection', 'btn-primary btn-small', `data-id="${c.id}"`)} ${button('Praticar', 'practice-collection', 'btn-soft btn-small', `data-id="${c.id}" data-name="${esc(c.name)}"`)}</div></article>`).join('')}</div>` : empty('Crie sua primeira coleção', 'Escolha palavras do banco ou suas palavras pessoais para praticar depois.')}`;
   }
@@ -195,28 +208,53 @@
   function renderCollection() {
     const c = state.collection;
     if (!c) return loadingCard();
-    return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="navigate" data-view="collections">← Coleções</button><div class="eyebrow" style="margin-top:1rem">Lista pessoal</div><h1 class="page-title">${esc(c.name)}</h1><p>${c.terms.length} termo(s) nesta coleção</p></div><div class="card-actions">${button('Praticar', 'practice-collection', 'btn-primary', `data-id="${c.id}" data-name="${esc(c.name)}"`)} ${button('Adicionar palavras', 'new-collection', 'btn-soft')}</div></div>
+    return `    <div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="navigate" data-view="collections">← Coleções</button><div class="eyebrow" style="margin-top:1rem">Lista pessoal</div><h1 class="page-title">${esc(c.name)}</h1><p>${c.terms.length} termo(s) nesta coleção</p></div><div class="card-actions">${button('Praticar', 'practice-collection', 'btn-primary', `data-id="${c.id}" data-name="${esc(c.name)}"`)} ${button('Adicionar palavras', 'add-collection-terms','btn-soft',`data-id="${c.id}" data-name="${esc(c.name)}"`)}</div></div>
       ${c.terms.length ? `<div class="grid grid-3">${c.terms.map(t=>`<article class="card term-card"><div class="card-top"><span class="chip">${esc(t.area)}</span>${button('Remover', 'remove-collection-term', 'btn-danger btn-small', `data-collection="${c.id}" data-term="${t.id}"`)}</div><h3 data-action="open-term" data-id="${t.id}">${esc(t.name)} ${t.created_by_me ? '<span class="chip gold">Criado por você</span>' : ''}</h3><p>${esc(t.definition)}</p><button class="btn btn-plain btn-small" data-action="open-term" data-id="${t.id}">Ver termo</button></article>`).join('')}</div>` : empty('Coleção vazia', 'Adicione termos por aqui ou na área Explorar.')}`;
   }
 
   function renderNewCollection() {
-    const items = state.trailCatalog?.terms || [];
-    const own = items.filter(t=>t.created_by_me), catalog = items.filter(t=>!t.created_by_me);
-    const rows = (list) => list.map(t=>`<label class="check-row"><input type="checkbox" name="term_ids" value="${t.id}"><span><strong>${esc(t.name)}</strong><small class="muted"> · ${esc(t.area)}</small><br><small class="muted">${esc(t.definition)}</small></span></label>`).join('');
-    return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="navigate" data-view="collections">← Coleções</button><div class="eyebrow" style="margin-top:1rem">Nova lista privada</div><h1 class="page-title">Criar coleção</h1><p>Suas palavras aparecem primeiro para facilitar a seleção.</p></div></div>
-      <form class="card" data-form="collection-create"><div class="field"><label>Nome da coleção</label><input name="name" maxlength="100" required placeholder="Ex.: Revisão de citologia"></div><div class="toolbar"><input data-role="collection-search" placeholder="Pesquisar termos…"><select data-role="collection-area"><option value="">Todas as áreas</option>${state.trailAreas.map(a=>`<option>${esc(a.name)}</option>`).join('')}</select><span class="muted small"><b data-role="selected-count">0</b> selecionado(s)</span></div>
-      ${own.length ? `<div class="split-heading"><h2>Palavras criadas por você</h2><span class="chip gold">${own.length}</span></div><div class="checklist" data-list-group="own">${rows(own)}</div>` : ''}
-      <div class="split-heading"><h2>Termos do catálogo</h2></div><div class="checklist" data-list-group="catalog">${rows(catalog)}</div><div class="card-actions"><button class="btn btn-primary" type="submit">Salvar coleção</button><button class="btn btn-plain" type="button" data-action="navigate" data-view="collections">Cancelar</button></div></form>`;
+    return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="navigate" data-view="collections">← Coleções</button><div class="eyebrow" style="margin-top:1rem">Nova lista privada</div><h1 class="page-title">Criar coleção</h1><p>Pesquise no catálogo e marque somente os termos que deseja incluir.</p></div></div>
+      <form class="card term-selection-form" data-form="collection-create"><div class="field"><label>Nome da coleção</label><input name="name" maxlength="100" required placeholder="Ex.: Revisão de citologia"></div>
+      ${renderTermSelection()}<div class="card-actions"><button class="btn btn-primary" type="submit">Salvar coleção</button><button class="btn btn-plain" type="button" data-action="navigate" data-view="collections">Cancelar</button></div></form>`;
   }
 
   function renderCreateTrail() {
     const d = state.dashboard || {classes:[], areas:[]};
-    const terms = state.trailCatalog?.terms || [];
     return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="navigate" data-view="dashboard">← Painel</button><div class="eyebrow" style="margin-top:1rem">Professor</div><h1 class="page-title">Criar trilha</h1><p>Pesquise no banco ou filtre por área; marque quantos termos quiser para compor a trilha.</p></div></div>
-      <form class="card" data-form="trail-create"><div class="form-row"><div class="field"><label>Nome da trilha</label><input name="name" maxlength="150" required placeholder="Ex.: Sistema circulatório"></div><div class="field"><label>Área principal</label><select name="area"><option value="">Todas as áreas</option>${state.trailAreas.map(a=>`<option>${esc(a.name)}</option>`).join('')}</select></div></div><div class="field"><label>Descrição</label><textarea name="description" maxlength="3000" placeholder="Objetivo ou observação para os alunos"></textarea></div>
-      <div class="split-heading"><h2>Termos da trilha</h2><span class="chip"><b data-role="selected-count">0</b>&nbsp;selecionados</span></div><div class="toolbar"><input data-role="trail-search" placeholder="Pesquisar palavra ou definição"><select data-role="trail-area"><option value="">Todas as áreas</option>${state.trailAreas.map(a=>`<option>${esc(a.name)}</option>`).join('')}</select></div><div class="checklist" data-role="trail-terms">${terms.map(t=>`<label class="check-row term-choice" data-name="${esc((t.name+' '+t.definition).toLocaleLowerCase())}" data-area="${esc(t.area)}"><input type="checkbox" name="term_ids" value="${t.id}"><span><strong>${esc(t.name)}</strong>${t.created_by_me ? ' <small class="chip gold">Criado por você</small>' : ''}<br><small class="muted">${esc(t.area)} · ${esc(t.definition)}</small></span></label>`).join('')}</div>
+      <form class="card term-selection-form" data-form="trail-create"><div class="form-row"><div class="field"><label>Nome da trilha</label><input name="name" maxlength="150" required placeholder="Ex.: Sistema circulatório"></div><div class="field"><label>Área principal</label><select name="area"><option value="">Todas as áreas</option>${state.trailAreas.map(a=>`<option>${esc(a.name)}</option>`).join('')}</select></div></div><div class="field"><label>Descrição</label><textarea name="description" maxlength="3000" placeholder="Objetivo ou observação para os alunos"></textarea></div>
+      <div class="split-heading"><h2>Termos da trilha</h2></div>${renderTermSelection()}
       ${d.classes.length ? `<div class="split-heading"><h2>Atribuir agora</h2><span class="muted small">Opcional</span></div><div class="field"><label>Prazo para as turmas selecionadas (opcional)</label><input type="date" name="due_date"></div><div class="checklist">${d.classes.map(c=>`<label class="check-row"><input type="checkbox" name="class_ids" value="${c.id}"><span><strong>${esc(c.name)}</strong> · código ${esc(c.code)}</span></label>`).join('')}</div>` : '<div class="notice">Você poderá atribuir esta trilha a uma turma depois de criá-la.</div>'}
       <div class="card-actions"><button class="btn btn-primary" type="submit">Salvar trilha</button><button class="btn btn-plain" type="button" data-action="navigate" data-view="dashboard">Cancelar</button></div></form>`;
+  }
+
+  function renderTermSelection() {
+    const areas = state.trailAreas || [];
+    return `<div class="toolbar"><input type="search" data-role="term-search" placeholder="Pesquise um termo ou definição para começar" autocomplete="off"><select data-role="term-area"><option value="">Todas as áreas</option>${areas.map(a=>`<option value="${esc(a.name)}">${esc(a.name)}</option>`).join('')}</select><span class="muted small"><b data-role="selected-count">${state.selectedTermIds.size}</b> selecionado(s)</span></div>
+      <div class="checklist" data-role="term-results">${state.catalogTerms.length ? renderTermChoices() : '<p class="muted small term-search-hint">Digite no campo de pesquisa para exibir termos.</p>'}</div>
+      <div class="selected-term-list" data-role="selected-term-list">${renderSelectedTerms()}</div>
+      <div class="term-selection-inputs" data-role="selected-term-inputs">${[...state.selectedTermIds].map(id=>`<input type="hidden" name="term_ids" value="${id}">`).join('')}</div>`;
+  }
+
+  function renderSelectedTerms() {
+    if (!state.selectedTermIds.size) return '';
+    return `<div class="muted small">Selecionados:</div>${[...state.selectedTermIds].map(id=>{
+      const term=state.selectedTermInfo.get(id);
+      return `<span class="selected-term-chip">${esc(term?.name || `Termo ${id}`)}<button type="button" data-action="remove-selected-term" data-id="${id}" aria-label="Remover ${esc(term?.name || 'termo')}">×</button></span>`;
+    }).join('')}`;
+  }
+
+  function renderTermChoices() {
+    const rows = state.catalogTerms.filter(term => !state.existingTermIds.has(term.id));
+    if (!rows.length) return '<p class="muted small">Nenhum termo novo encontrado para esta pesquisa.</p>';
+    return rows.map(term=>`<label class="check-row"><input type="checkbox" data-role="term-checkbox" value="${term.id}" ${state.selectedTermIds.has(term.id)?'checked':''}><span><strong>${esc(term.name)}</strong>${term.created_by_me ? ' <small class="chip gold">Criado por você</small>' : ''}<br><small class="muted">${esc(term.area)} · ${esc(term.definition)}</small></span></label>`).join('');
+  }
+
+  function renderAddTerms() {
+    const target = state.termSelectionTarget;
+    if (!target) return loadingCard();
+    const isTrail = target.type === 'trail';
+    return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="${isTrail?'navigate':'open-collection'}" ${isTrail?'data-view="dashboard"':`data-id="${target.id}"`}>← Voltar</button><div class="eyebrow" style="margin-top:1rem">${isTrail?'Trilha':'Coleção'}</div><h1 class="page-title">Adicionar termos</h1><p>Pesquise termos para incluir em “${esc(target.name)}”. Nenhum termo é exibido antes da busca.</p></div></div>
+      <form class="card term-selection-form" data-form="${isTrail?'trail-add-terms':'collection-add-terms'}" data-target-id="${target.id}">${renderTermSelection()}<div class="card-actions"><button class="btn btn-primary" type="submit">Adicionar selecionados</button><button class="btn btn-plain" type="button" data-action="${isTrail?'navigate':'open-collection'}" ${isTrail?'data-view="dashboard"':`data-id="${target.id}"`}>Cancelar</button></div></form>`;
   }
 
   function renderTeacherTerm() {
@@ -235,20 +273,18 @@
     const d = state.classDetail;
     if (!d) return loadingCard();
     const teacher = d.role === 'Professor';
-    const tabs = teacher ? [['students','Alunos'],['daily','XP por dia'],['results','Avaliações'],['trails','Trilhas']] : [['rank','Ranking XP'],['trails','Trilhas']];
+    const tabs = teacher ? [['students','Alunos'],['rank','Ranking semanal'],['results','Avaliações'],['trails','Trilhas']] : [['rank','Ranking semanal'],['trails','Trilhas']];
     let body = '';
     if (state.classTab === 'students') body = renderStudents(d.students || []);
     if (state.classTab === 'rank') body = renderRank(d);
-    if (state.classTab === 'daily') body = renderDaily(d);
     if (state.classTab === 'results') body = renderAssessmentResults(d.assessment_results || []);
     if (state.classTab === 'trails') body = renderClassTrails(d, teacher);
-    return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="navigate" data-view="classes">← Minhas turmas</button><div class="eyebrow" style="margin-top:1rem">${teacher?'Área do professor':'Sua turma'}</div><h1 class="page-title">${esc(d.name)}</h1><p>${teacher ? `Código de entrada: <strong>${esc(d.code)}</strong> · Acompanhe o andamento das trilhas, as avaliações e o último acesso.` : 'Pratique as trilhas e acompanhe seu ranking de XP.'}</p></div></div>
+    return `    <div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="navigate" data-view="classes">← Minhas turmas</button><div class="eyebrow" style="margin-top:1rem">${teacher?'Área do professor':'Sua turma'}</div><h1 class="page-title">${esc(d.name)}</h1><p>${teacher ? `Código de entrada: <strong>${esc(d.code)}</strong> · Acompanhe o andamento das trilhas, as avaliações e o último acesso.` : 'Pratique as trilhas e acompanhe o ranking semanal de XP.'}</p></div></div>
       <div class="tabs">${tabs.map(([id,label])=>`<button class="tab ${state.classTab===id?'active':''}" data-action="class-tab" data-tab="${id}">${label}</button>`).join('')}</div>${body}`;
   }
 
-
   function renderStudents(students) {
-    return `<div class="card"><h2>Alunos desta turma</h2><p class="muted small">Abra um aluno para ver, somente nesta turma, o andamento de cada trilha atribuída.</p>${students.length ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Aluno</th><th>Trilhas</th><th>XP na turma</th><th>XP hoje</th><th>Último acesso</th><th></th></tr></thead><tbody>${students.map((s,i)=>`<tr><td class="rank">${i+1}</td><td><strong>${esc(s.name)}</strong><br><small class="muted">${esc(s.email)}</small></td><td><span class="chip ${s.late_trails?'danger':'gold'}">${esc(s.trail_status)}</span>${s.assigned_trails?`<br><small class="muted">${s.pending_trails} pendente(s)</small>`:''}</td><td>${s.total_xp}</td><td>${s.daily_xp}</td><td>${fmtDate(s.last_access)}</td><td>${button('Ver detalhes','open-student','btn-soft btn-small',`data-id="${esc(s.user_id)}"`)}</td></tr>`).join('')}</tbody></table></div>` : empty('Nenhum aluno nesta turma', 'Compartilhe o código de entrada para que os alunos possam participar.')}</div>`;
+    return `<div class="card"><h2>Alunos desta turma</h2><p class="muted small">Abra um aluno para ver, somente nesta turma, o andamento de cada trilha atribuída.</p>${students.length ? `<div class="table-wrap"><table><thead><tr><th>Aluno</th><th>Trilhas</th><th>XP na semana</th><th>Último acesso</th><th></th></tr></thead><tbody>${students.map(s=>`<tr><td><strong>${esc(s.name)}</strong><br><small class="muted">${esc(s.email)}</small></td><td><span class="chip ${s.late_trails?'danger':'gold'}">${esc(s.trail_status)}</span>${s.assigned_trails?`<br><small class="muted">${s.pending_trails} pendente(s)</small>`:''}</td><td>${s.weekly_xp}</td><td>${fmtDate(s.last_access)}</td><td>${button('Ver detalhes','open-student','btn-soft btn-small',`data-id="${esc(s.user_id)}"`)}</td></tr>`).join('')}</tbody></table></div>` : empty('Nenhum aluno nesta turma', 'Compartilhe o código de entrada para que os alunos possam participar.')}</div>`;
   }
 
   function renderStudentDetail() {
@@ -256,7 +292,7 @@
     if (!detail) return loadingCard();
     const s = detail.student;
     return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="back-to-class">← ${esc(detail.class_name)}</button><div class="eyebrow" style="margin-top:1rem">Acompanhamento da turma</div><h1 class="page-title">${esc(s.name)}</h1><p>${esc(s.email)} · Último acesso: ${fmtDate(s.last_access)}</p></div></div>
-      <div class="grid grid-2"><div class="stat-card"><strong>${s.total_xp}</strong><span>XP nesta turma</span></div><div class="stat-card"><strong>${s.daily_xp}</strong><span>XP hoje nesta turma</span></div></div>
+      <div class="grid grid-2"><div class="stat-card"><strong>${s.weekly_xp}</strong><span>XP nesta turma nesta semana</span></div></div>
       <div class="split-heading"><h2>Trilhas atribuídas nesta turma</h2></div>
       ${detail.trails.length ? `<div class="grid grid-2">${detail.trails.map(t=>`<article class="card"><div class="card-top"><span class="chip">${esc(t.area)}</span><span class="chip ${['atrasado','concluida_com_atraso'].includes(t.status)?'danger':'gold'}">${esc(t.status_label)}</span></div><h3>${esc(t.name)}</h3><p>${t.played} de ${t.total} termos praticados (${t.percent}%)</p><div class="progress-track"><div class="progress-fill" style="width:${t.percent}%"></div></div><p class="muted small">Prazo: ${t.due_date?fmtDate(t.due_date,false):'Sem prazo'}</p><p>${t.completed?'Trilha concluída.':t.assessment?.passed?'Avaliação aprovada; falta praticar todos os termos.':t.assessment?'Avaliação ainda não aprovada.': 'Avaliação ainda não configurada pelo professor.'}</p>${t.attempts.length?`<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Tentativa</th><th>Nota</th><th>Resultado</th><th>Data</th></tr></thead><tbody>${t.attempts.map((a,i)=>`<tr><td>${i+1}</td><td>${a.score}%</td><td>${a.passed?'Aprovado':'Não aprovado'}</td><td>${fmtDate(a.played_at)}</td></tr>`).join('')}</tbody></table></div>`:''}</article>`).join('')}</div>`:empty('Nenhuma trilha atribuída', 'Esta turma ainda não tem trilhas para acompanhar.')}`;
   }
@@ -285,17 +321,13 @@
   }
 
   function renderRank(d) {
-    const all = d.leaderboard || [], day = d.daily_leaderboard || [];
-    return `<div class="grid grid-2"><article class="card"><div class="card-top"><div><h2>Ranking da turma</h2><p class="muted small">XP acumulado nas atividades desta turma.</p></div><span class="chip gold">Geral</span></div>${rankTable(all)}</article><article class="card"><div class="card-top"><div><h2>XP do dia</h2><p class="muted small">Atualizado por dia no fuso de Brasília.</p></div><span class="chip">${esc(d.daily_date)}</span></div>${rankTable(day)}</article></div>`;
+    const rows = d.weekly_leaderboard || [];
+    const formatDay = value => value ? new Intl.DateTimeFormat('pt-BR', {day:'2-digit',month:'2-digit',timeZone:'UTC'}).format(new Date(`${value}T12:00:00Z`)) : '';
+    return `<div class="card"><div class="card-top"><div><h2>Ranking semanal de XP</h2><p class="muted small">XP conquistado em atividades realizadas nesta turma entre segunda-feira e domingo.</p></div><span class="chip gold">${formatDay(d.week_start)} a ${formatDay(d.week_end)}</span></div>${rankTable(rows)}</div>`;
   }
 
   function rankTable(rows) {
     return rows.length ? `<div class="table-wrap"><table style="min-width:0"><thead><tr><th>#</th><th>Aluno</th><th>XP</th></tr></thead><tbody>${rows.map(r=>`<tr ${r.is_me?'style="background:#f2f6ef"':''}><td class="rank">${r.rank}</td><td>${esc(r.name)} ${r.is_me?'<small class="chip">Você</small>':''}</td><td><strong>${r.xp}</strong></td></tr>`).join('')}</tbody></table></div>` : empty('Sem alunos para ranquear', 'O ranking aparece quando estudantes entram na turma.');
-  }
-
-  function renderDaily(d) {
-    const rows = d.daily_leaderboard || [];
-    return `<div class="card"><div class="card-top"><div><h2>Ranking diário de XP</h2><p class="muted small">Selecione um dia para comparar o XP obtido por cada estudante.</p></div><label class="field" style="margin:0"><span class="field-label">Dia</span><input type="date" data-role="class-date" value="${esc(d.daily_date)}"></label></div><div style="margin-top:1rem">${rankTable(rows)}</div></div>`;
   }
 
   function renderAssessmentResults(rows) {
@@ -312,7 +344,8 @@
     }
     return `${assign}${trails.length ? `<div class="grid grid-2">${trails.map(t=>{
       const learning=t.status_label ? `<div class="trail-progress"><span>${t.played || 0} de ${t.total || t.terms?.length || 0} termos praticados</span><span class="chip ${['atrasado','concluida_com_atraso'].includes(t.status)?'danger':''}">${esc(t.status_label)}</span></div><div class="progress-track"><div class="progress-fill" style="width:${t.progress ?? 0}%"></div></div>` : `<p class="muted small">${t.terms?.length || 0} termos · ${t.due_date ? `Prazo: ${fmtDate(t.due_date,false)}` : 'Sem prazo definido'}</p>`;
-      const assessmentAction=teacher ? button(t.assessment?'Editar avaliação':'Configurar avaliação','configure-assessment','btn-soft btn-small',`data-assignment="${t.assignment_id}" data-trail="${t.id}" data-name="${esc(t.name)}" data-class="${d.id}"`) : t.assessment ? button(t.assessment.passed?'Avaliação aprovada':t.assessment.can_start?'Fazer avaliação':'Pratique todos os termos primeiro','start-assessment',t.assessment.can_start?'btn-soft btn-small':'btn-plain btn-small',`data-assignment="${t.assignment_id}" data-class="${d.id}" ${t.assessment.can_start?'':'disabled'}`) : '<span class="muted small">Aguardando avaliação do professor</span>';
+      const quizLabel=t.assessment?.can_start ? (t.assessment.passed?'Refazer quiz':'Fazer quiz') : 'Pratique todos os termos primeiro';
+      const assessmentAction=teacher ? button(t.assessment?'Editar avaliação':'Configurar avaliação','configure-assessment','btn-soft btn-small',`data-assignment="${t.assignment_id}" data-trail="${t.id}" data-name="${esc(t.name)}" data-class="${d.id}"`) : t.assessment ? button(quizLabel,'start-assessment',t.assessment.can_start?'btn-primary btn-small':'btn-plain btn-small',`data-assignment="${t.assignment_id}" data-class="${d.id}" ${t.assessment.can_start?'':'disabled'}`) : '<span class="muted small">Aguardando avaliação do professor</span>';
       const practice=teacher?'':button('Praticar trilha','practice-trail','btn-primary btn-small',`data-assignment="${t.assignment_id}" data-trail="${t.id}" data-name="${esc(t.name)}" data-class="${d.id}"`);
       return `<article class="card"><div class="card-top"><span class="chip">${esc(t.area)}</span>${teacher?button('Remover da turma','unassign-trail','btn-danger btn-small',`data-id="${t.id}" data-class="${d.id}"`):`<span class="chip gold">${t.progress ?? 0}%</span>`}</div><h3>${esc(t.name)}</h3>${learning}<div class="card-actions">${teacher?assessmentAction:button('Ver termos','open-trail','btn-plain btn-small',`data-id="${t.id}" data-assignment="${t.assignment_id}"`)}${practice}</div></article>`;
     }).join('')}</div>` : empty('Nenhuma trilha atribuída', teacher ? 'Crie uma trilha ou atribua uma das existentes.' : 'Seu professor ainda não atribuiu uma trilha a esta turma.')}`;
@@ -434,6 +467,9 @@
       case 'assessment-config': content = renderAssessmentConfig(); break;
       case 'assessment': content = renderAssessment(); break;
       case 'assessment-result': content = renderAssessmentResult(); break;
+      case 'profile': content = renderProfile(); break;
+      case 'collection-add-terms': content = renderAddTerms(); break;
+      case 'trail-add-terms': content = renderAddTerms(); break;
       case 'games': content = renderGames(); break;
       case 'sources': content = renderSources(); break;
       case 'choose-game': content = renderChooseGame(); break;
@@ -517,12 +553,35 @@
   }
 
   async function createCollectionScreen() {
-    const [catalog, meta, collections] = await Promise.all([api('/catalog/terms'), api('/meta'), api('/collections')]);
-    state.trailCatalog = catalog; state.trailAreas = meta.areas; state.collections = collections.collections; state.view = 'collection-create'; render();
+    const [meta, collections] = await Promise.all([api('/meta'), api('/collections')]);
+    clearTimeout(state.catalogSearchTimer); state.catalogSearchSequence++;
+    state.trailAreas = meta.areas; state.collections = collections.collections; state.catalogTerms = [];
+    state.selectedTermIds = new Set(); state.selectedTermInfo = new Map(); state.existingTermIds = new Set(); state.view = 'collection-create'; render();
   }
   async function createTrailScreen() {
-    const [catalog, meta, dash] = await Promise.all([api('/catalog/terms'), api('/meta'), api('/dashboard')]);
-    state.trailCatalog = catalog; state.trailAreas = meta.areas; state.dashboard = dash; state.view = 'trail-create'; render();
+    const [meta, dash] = await Promise.all([api('/meta'), api('/dashboard')]);
+    clearTimeout(state.catalogSearchTimer); state.catalogSearchSequence++;
+    state.trailAreas = meta.areas; state.dashboard = dash; state.catalogTerms = [];
+    state.selectedTermIds = new Set(); state.selectedTermInfo = new Map(); state.existingTermIds = new Set(); state.view = 'trail-create'; render();
+  }
+  async function addCollectionTermsScreen(id, name) {
+    const [detail, meta] = await Promise.all([api(`/collections/${id}`), api('/meta')]);
+    clearTimeout(state.catalogSearchTimer); state.catalogSearchSequence++;
+    state.trailAreas = meta.areas; state.catalogTerms = [];
+    state.selectedTermIds = new Set(); state.selectedTermInfo = new Map(); state.existingTermIds = new Set(detail.collection.terms.map(term => term.id));
+    state.termSelectionTarget = {type:'collection', id:Number(id), name:name || detail.collection.name};
+    state.view = 'collection-add-terms'; render();
+  }
+  async function addTrailTermsScreen(id, name) {
+    if (!state.dashboard) state.dashboard = await api('/dashboard');
+    const trail = (state.dashboard.trails || []).find(item => Number(item.id) === Number(id));
+    if (!trail) throw new Error('Trilha não encontrada no painel.');
+    const meta = await api('/meta');
+    clearTimeout(state.catalogSearchTimer); state.catalogSearchSequence++;
+    state.trailAreas = meta.areas; state.catalogTerms = [];
+    state.selectedTermIds = new Set(); state.selectedTermInfo = new Map(); state.existingTermIds = new Set(trail.terms || []);
+    state.termSelectionTarget = {type:'trail', id:Number(id), name:name || trail.name};
+    state.view = 'trail-add-terms'; render();
   }
   async function createTermScreen(student) {
     if (student) {
@@ -580,6 +639,22 @@
       else if (action === 'new-teacher-term') await createTermScreen(false);
       else if (action === 'new-student-term') await createTermScreen(true);
       else if (action === 'new-collection') await createCollectionScreen();
+      else if (action === 'open-profile') { state.profilePasswordEdit=false; state.view='profile'; render(); }
+      else if (action === 'edit-profile-password') { state.profilePasswordEdit=true; render(); }
+      else if (action === 'cancel-password-edit') { state.profilePasswordEdit=false; render(); }
+      else if (action === 'select-avatar') {
+        const d=await api('/auth/profile',{method:'PATCH',body:{avatar:buttonEl.dataset.avatar}});
+        state.user=d.user; render(); toast('Avatar atualizado.');
+      }
+      else if (action === 'add-collection-terms') await addCollectionTermsScreen(buttonEl.dataset.id,buttonEl.dataset.name);
+      else if (action === 'add-trail-terms') await addTrailTermsScreen(buttonEl.dataset.id,buttonEl.dataset.name);
+      else if (action === 'remove-selected-term') {
+        const id=Number(buttonEl.dataset.id);
+        state.selectedTermIds.delete(id); state.selectedTermInfo.delete(id);
+        const checkbox=document.querySelector(`[data-role="term-checkbox"][value="${id}"]`);
+        if (checkbox) checkbox.checked=false;
+        updateSelectedCount();
+      }
       else if (action === 'open-class') await loadClass(buttonEl.dataset.id);
       else if (action === 'open-student') await loadStudentDetail(buttonEl.dataset.id);
       else if (action === 'open-term') await openTerm(buttonEl.dataset.id);
@@ -764,6 +839,10 @@
         const d=await api('/auth/register',{method:'POST',body:{name:data.get('name'),email:data.get('email'),password:data.get('password'),role:data.get('role')}}); toast(d.message); state.authMode='login'; renderAuth();
       } else if (kind === 'recovery') {
         const d=await api('/auth/recovery',{method:'POST',body:{email:data.get('email')}}); toast(d.message); state.authMode='login'; renderAuth();
+      } else if (kind === 'change-password') {
+        if (data.get('password')!==data.get('confirm')) return toast('As senhas não são iguais.');
+        const d=await api('/auth/change-password',{method:'POST',body:{current_password:data.get('current_password'),password:data.get('password')}});
+        state.profilePasswordEdit=false; render(); toast(d.message);
       } else if (kind === 'new-class') {
         await api('/classes',{method:'POST',body:{name:data.get('name')}}); await loadDashboard(); toast('Turma criada.');
       } else if (kind === 'join-class') {
@@ -771,12 +850,20 @@
       } else if (kind === 'explore-filter') {
         state.exploreKind=data.get('kind'); state.exploreSearch=data.get('search'); state.exploreArea=data.get('area'); await loadExplore(state.exploreKind);
       } else if (kind === 'collection-create') {
-        const body={name:data.get('name'),term_ids:data.getAll('term_ids').map(Number)};
+        const body={name:data.get('name'),term_ids:[...state.selectedTermIds]};
         const d=await api('/collections',{method:'POST',body}); state.collections=[...(state.collections||[]),d.collection]; await loadCollections(); toast('Coleção criada.');
+      } else if (kind === 'collection-add-terms') {
+        const id=Number(form.dataset.targetId);
+        await api(`/collections/${id}/terms`,{method:'POST',body:{term_ids:[...state.selectedTermIds]}});
+        await loadCollection(id); toast('Termos adicionados à coleção.');
+      } else if (kind === 'trail-add-terms') {
+        const id=Number(form.dataset.targetId);
+        await api(`/trails/${id}/terms`,{method:'POST',body:{term_ids:[...state.selectedTermIds]}});
+        state.dashboard=await api('/dashboard'); state.view='dashboard'; render(); toast('Termos adicionados à trilha.');
       } else if (kind === 'add-to-collection') {
         await api(`/collections/${data.get('collection_id')}/terms`,{method:'POST',body:{term_id:Number(data.get('term_id'))}}); toast('Termo adicionado à coleção.');
       } else if (kind === 'trail-create') {
-        const body={name:data.get('name'),description:data.get('description'),area:data.get('area'),term_ids:data.getAll('term_ids').map(Number),class_ids:data.getAll('class_ids').map(Number),due_date:data.get('due_date') || null};
+        const body={name:data.get('name'),description:data.get('description'),area:data.get('area'),term_ids:[...state.selectedTermIds],class_ids:data.getAll('class_ids').map(Number),due_date:data.get('due_date') || null};
         await api('/trails',{method:'POST',body}); await loadDashboard(); toast('Trilha criada.');
       } else if (kind === 'assign-trail') {
         await api(`/classes/${state.classId}/trails`,{method:'POST',body:{trail_id:Number(data.get('trail_id')),due_date:data.get('due_date') || null}}); await loadClass(state.classId); state.classTab='trails'; render(); toast('Trilha atribuída à turma.');
@@ -803,39 +890,66 @@
 
   function handleChange(event) {
     const target=event.target;
-    if (target.matches('[data-role="class-date"]')) {
-      const active=state.classTab; loadClass(state.classId,target.value).then(()=>{state.classTab=active;render();}).catch(e=>toast(e.message));
+    if (target.matches('[data-role="term-area"]')) searchCatalogTerms();
+    if (target.matches('[data-role="term-checkbox"]')) {
+      const id=Number(target.value);
+      if (target.checked) {
+        state.selectedTermIds.add(id);
+        const term=state.catalogTerms.find(item=>item.id===id);
+        if (term) state.selectedTermInfo.set(id,term);
+      } else {
+        state.selectedTermIds.delete(id); state.selectedTermInfo.delete(id);
+      }
+      updateSelectedCount();
     }
-    if (target.matches('[data-role="trail-area"]') || target.matches('[data-role="collection-area"]')) filterCatalog();
-    if (target.name==='term_ids' || target.name==='class_ids') updateSelectedCount();
+    if (target.name==='class_ids') updateSelectedCount();
   }
 
   function handleInput(event) {
-    if (event.target.matches('[data-role="trail-search"]') || event.target.matches('[data-role="trail-area"]')) filterCatalog();
-    if (event.target.matches('[data-role="collection-search"]') || event.target.matches('[data-role="collection-area"]')) filterCatalog();
+    if (event.target.matches('[data-role="term-search"]')) searchCatalogTerms();
     if (event.target.matches('[data-role="radical-search"]')) {
       const q=event.target.value.toLocaleLowerCase();
       document.querySelectorAll('.radical-choice').forEach(row=>row.hidden=!row.dataset.search.includes(q));
     }
   }
 
-  function filterCatalog() {
-    const trailSearch=document.querySelector('[data-role="trail-search"]');
-    const trailArea=document.querySelector('[data-role="trail-area"]');
-    const collectionSearch=document.querySelector('[data-role="collection-search"]');
-    const collectionArea=document.querySelector('[data-role="collection-area"]');
-    const q=(trailSearch?.value || collectionSearch?.value || '').toLocaleLowerCase();
-    const area=trailArea?.value || collectionArea?.value || '';
-    document.querySelectorAll('.term-choice').forEach(row=>{row.hidden=!(row.dataset.name.includes(q) && (!area || row.dataset.area===area));});
-    document.querySelectorAll('[data-list-group] .check-row').forEach(row=>{
-      const name=(row.textContent||'').toLocaleLowerCase(), rowArea=row.textContent||'';
-      row.hidden=!(name.includes(q) && (!area || rowArea.includes(area)));
-    });
+  function searchCatalogTerms() {
+    const form=document.querySelector('.term-selection-form');
+    const search=document.querySelector('[data-role="term-search"]');
+    const area=document.querySelector('[data-role="term-area"]');
+    const results=document.querySelector('[data-role="term-results"]');
+    if (!form || !search || !results) return;
+    clearTimeout(state.catalogSearchTimer);
+    const sequence=++state.catalogSearchSequence;
+    const query=search.value.trim();
+    if (!query) {
+      state.catalogTerms=[];
+      results.innerHTML='<p class="muted small term-search-hint">Digite no campo de pesquisa para exibir termos.</p>';
+      return;
+    }
+    results.innerHTML='<p class="muted small">Pesquisando termos…</p>';
+    state.catalogSearchTimer=setTimeout(async()=>{
+      try {
+        const params=new URLSearchParams({search:query,area:area?.value || ''});
+        const response=await api(`/catalog/terms?${params}`);
+        if (sequence!==state.catalogSearchSequence || !document.querySelector('.term-selection-form')) return;
+        state.catalogTerms=response.terms || [];
+        results.innerHTML=renderTermChoices();
+      } catch(error) {
+        if (sequence===state.catalogSearchSequence) {
+          results.innerHTML=`<p class="muted small">${esc(error.message)}</p>`;
+        }
+      }
+    },250);
   }
 
   function updateSelectedCount() {
-    const count=document.querySelectorAll('input[name="term_ids"]:checked').length;
+    const count=state.selectedTermIds.size;
     document.querySelectorAll('[data-role="selected-count"]').forEach(el=>el.textContent=String(count));
+    const inputs=document.querySelector('[data-role="selected-term-inputs"]');
+    if (inputs) inputs.innerHTML=[...state.selectedTermIds].map(id=>`<input type="hidden" name="term_ids" value="${id}">`).join('');
+    const selected=document.querySelector('[data-role="selected-term-list"]');
+    if (selected) selected.innerHTML=renderSelectedTerms();
   }
 
   async function init() {
