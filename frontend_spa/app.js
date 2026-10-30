@@ -99,7 +99,6 @@
         <div class="side-bottom"><div class="user-chip"><span class="avatar-badge">${state.user.avatar === 'cell' ? '🧬' : '🌱'}</span><strong>${esc(state.user.name)}</strong><small>${student ? 'Estudante' : 'Professor'}</small></div><button class="btn btn-soft btn-block profile-shortcut" data-action="open-profile" aria-label="Meu perfil"><span class="profile-shortcut-icon">${state.user.avatar === 'cell' ? '🧬' : '🌱'}</span><span class="profile-shortcut-label">Meu perfil</span></button><button class="btn btn-plain btn-block" data-action="logout">Sair da conta</button></div>
       </aside>
       <div class="main-column">
-        <header class="topbar"><div class="topbar-start"><div class="brand"><span class="brand-mark">L</span><span>LISE</span></div></div><div class="topbar-user"><small>${esc(state.user.name)} · ${student ? 'Aluno' : 'Professor'}</small>${button('Meu perfil','open-profile','btn-soft btn-small')}${button('Sair','logout','btn-plain btn-small')}</div></header>
         <main class="content">${content}</main>
       </div>
     </div>`;
