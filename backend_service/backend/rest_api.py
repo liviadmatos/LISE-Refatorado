@@ -454,12 +454,57 @@ def _parse_date(value, field_name='data'):
         _fail(400, f'{field_name.capitalize()} inválida.')
 
 
+def _parse_local_datetime(value, field_name):
+    if not isinstance(value, str) or not value.strip():
+        _fail(400, f'Informe a data e o horário de {field_name}.')
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+    except ValueError:
+        _fail(400, f'Data e horário de {field_name} inválidos.')
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=TZ)
+    return parsed.astimezone(timezone.utc)
+
+
+def _assignment_deadline(link, assessment=None):
+    if assessment and assessment.encerra_em:
+        return aware(assessment.encerra_em)
+    if link.data_limite:
+        return datetime.combine(link.data_limite + timedelta(days=1), time.min, tzinfo=TZ)
+    return None
+
+
+def _assessment_window_state(assessment, now=None):
+    now = now or utcnow()
+    opens_at = aware(assessment.abre_em) if assessment and assessment.abre_em else None
+    closes_at = aware(assessment.encerra_em) if assessment and assessment.encerra_em else None
+    if not opens_at or not closes_at:
+        return 'nao_agendado', opens_at, closes_at
+    if now < opens_at:
+        return 'agendado', opens_at, closes_at
+    if now >= closes_at:
+        return 'encerrado', opens_at, closes_at
+    return 'aberto', opens_at, closes_at
+
+
+def _require_assessment_window(assessment):
+    state, _opens_at, _closes_at = _assessment_window_state(assessment)
+    if state == 'nao_agendado':
+        _fail(409, 'O professor ainda não agendou a janela do BioQuiz.')
+    if state == 'agendado':
+        _fail(409, 'O BioQuiz ainda não está disponível. Aguarde o horário agendado.')
+    if state == 'encerrado':
+        _fail(409, 'O prazo do BioQuiz terminou.')
+
+
 def _assessment_config(link):
     row = g.db.scalar(select(Avaliacao).where(Avaliacao.fk_turma_trilha == link.id))
     if not row:
         return None
     return dict(id=row.id, title=row.titulo, question_count=row.quantidade,
-                content=row.conteudo, mode=row.formato, pass_score=row.nota_minima)
+                content=row.conteudo, mode=row.formato, pass_score=row.nota_minima,
+                opens_at=aware(row.abre_em).isoformat() if row.abre_em else None,
+                closes_at=aware(row.encerra_em).isoformat() if row.encerra_em else None)
 
 
 def _mark_practiced_terms(uid, link_id, term_ids):
@@ -590,7 +635,7 @@ def _bulk_assignment_learning_status(uid, links, include_attempts=False):
         )).all():
             sessions_by_assessment.setdefault(session.fk_avaliacao, []).append(session)
 
-    today = utcnow().astimezone(TZ).date()
+    now = utcnow()
     labels = {
         'concluida_no_prazo': 'Concluída no prazo',
         'concluida_com_atraso': 'Concluída com atraso',
@@ -614,14 +659,13 @@ def _bulk_assignment_learning_status(uid, links, include_attempts=False):
         passed_sessions = [session for session in sessions if session.aprovada]
         first_passed = min(passed_sessions, key=lambda session: aware(session.finalizada_em)) if passed_sessions else None
         completed = bool(total and percent == 100 and first_passed)
-        due = link.data_limite
+        due = _assignment_deadline(link, assessment)
         completion_at = None
         if completed:
             latest_play = latest_play_by_link.get(link.id)
             completion_at = max(aware(first_passed.finalizada_em), aware(latest_play)) if latest_play else aware(first_passed.finalizada_em)
-            completed_date = completion_at.astimezone(TZ).date()
-            status = 'concluida_com_atraso' if due and completed_date > due else 'concluida_no_prazo' if due else 'concluida'
-        elif due and today > due:
+            status = 'concluida_com_atraso' if due and completion_at > due else 'concluida_no_prazo' if due else 'concluida'
+        elif due and now >= due:
             status = 'atrasado'
         elif percent == 100 and not assessment:
             status = 'avaliacao_nao_configurada'
@@ -631,13 +675,17 @@ def _bulk_assignment_learning_status(uid, links, include_attempts=False):
             status = 'aguardando_avaliacao'
         else:
             status = 'em_dia'
+        window_state, opens_at, closes_at = _assessment_window_state(assessment, now) if assessment else ('nao_agendado', None, None)
         assessment_view = None
         if assessment:
             assessment_view = dict(
                 id=assessment.id, title=assessment.titulo, question_count=assessment.quantidade,
                 content=assessment.conteudo, mode=assessment.formato, pass_score=assessment.nota_minima,
                 attempts=len(sessions), best_score=best_session.pontuacao if best_session else None,
-                passed=bool(first_passed), can_start=total > 0 and percent == 100,
+                passed=bool(first_passed), window_state=window_state,
+                opens_at=opens_at.isoformat() if opens_at else None,
+                closes_at=closes_at.isoformat() if closes_at else None,
+                can_start=total > 0 and percent == 100 and window_state == 'aberto',
             )
         detail = dict(**progress, status=status, status_label=labels[status],
                       due_date=due.isoformat() if due else None,
@@ -700,7 +748,10 @@ def _bulk_class_learning_status(student_ids, links):
                AvaliacaoSessao.aprovada.is_(True))
         .group_by(AvaliacaoSessao.fk_usuario, Avaliacao.fk_turma_trilha)
     ).all()}
-    today = utcnow().astimezone(TZ).date()
+    assessments = {item.fk_turma_trilha: item for item in g.db.scalars(
+        select(Avaliacao).where(Avaliacao.fk_turma_trilha.in_(link_ids))
+    ).all()}
+    now = utcnow()
     summary = {}
     for uid in student_ids:
         states = []
@@ -708,17 +759,18 @@ def _bulk_class_learning_status(student_ids, links):
             total = int(totals.get(link.fk_trilha, 0) or 0)
             count, latest_play = played.get((uid, link.id), (0, None))
             passed_at = passed.get((uid, link.id))
+            deadline = _assignment_deadline(link, assessments.get(link.id))
             complete = bool(total and count >= total and passed_at)
             completed_at = None
             if complete:
                 latest_play, passed_at = aware(latest_play), aware(passed_at)
                 completed_at = max(latest_play, passed_at) if latest_play else passed_at
             if complete:
-                late = bool(link.data_limite and completed_at.astimezone(TZ).date() > link.data_limite)
+                late = bool(deadline and completed_at > deadline)
                 states.append('concluida_com_atraso' if late else 'concluida')
-            elif link.data_limite and today > link.data_limite:
+            elif deadline and now >= deadline:
                 states.append('atrasado')
-            elif link.data_limite:
+            elif deadline:
                 states.append('em_dia')
             else:
                 states.append('sem_prazo')
@@ -818,7 +870,9 @@ def class_detail(class_id):
     trail_data = {item['id']: item for item in trail_views(g.db, trail_rows)}
     assessment_rows = g.db.scalars(select(Avaliacao).where(Avaliacao.fk_turma_trilha.in_([link.id for link in links]))).all() if links else []
     assessments = {item.fk_turma_trilha: dict(id=item.id, title=item.titulo, question_count=item.quantidade,
-                                               content=item.conteudo, mode=item.formato, pass_score=item.nota_minima)
+                                              content=item.conteudo, mode=item.formato, pass_score=item.nota_minima,
+                                              opens_at=aware(item.abre_em).isoformat() if item.abre_em else None,
+                                              closes_at=aware(item.encerra_em).isoformat() if item.encerra_em else None)
                   for item in assessment_rows}
     learning_by_link = _bulk_assignment_learning_status(g.user.id_usuario, links) if g.user.perfil == 'Aluno' else {}
     trails = []
@@ -827,9 +881,11 @@ def class_detail(class_id):
         if not item:
             continue
         item = dict(item)
+        assessment_data = assessments.get(link.id)
         item.update(assignment_id=link.id,
-                    due_date=link.data_limite.isoformat() if link.data_limite else None,
-                    assessment=assessments.get(link.id))
+                    due_date=(assessment_data['closes_at'] if assessment_data and assessment_data['closes_at']
+                              else link.data_limite.isoformat() if link.data_limite else None),
+                    assessment=assessment_data)
         if g.user.perfil == 'Aluno':
             item.update(learning_by_link.get(link.id, {}))
             item['progress'] = item.get('percent', 0)
@@ -1082,12 +1138,20 @@ def assessment_upsert(class_id, assignment_id):
         _fail(400, 'Esse formato exige conteúdo de radicais.')
     if content == 'radicais' and mode in ('termo_definicao', 'definicao_termo'):
         _fail(400, 'Esse formato exige conteúdo de termos.')
+    opens_at = _parse_local_datetime(data.get('opens_at'), 'abertura do BioQuiz')
+    closes_at = _parse_local_datetime(data.get('closes_at'), 'encerramento do BioQuiz')
+    if closes_at <= opens_at:
+        _fail(400, 'O encerramento do BioQuiz precisa ser posterior à abertura.')
+    if closes_at <= utcnow():
+        _fail(400, 'O encerramento do BioQuiz precisa estar no futuro.')
     row = g.db.scalar(select(Avaliacao).where(Avaliacao.fk_turma_trilha == link.id))
     if not row:
         row = Avaliacao(fk_turma_trilha=link.id, fk_professor=g.user.id_usuario)
         g.db.add(row)
     row.titulo, row.quantidade = title, count
     row.conteudo, row.formato, row.nota_minima = content, mode, pass_score
+    row.abre_em, row.encerra_em = opens_at, closes_at
+    link.data_limite = closes_at.astimezone(TZ).date()
     g.db.commit()
     return jsonify(assessment=_assessment_config(link), message='Avaliação salva para esta turma e trilha.')
 
@@ -1101,6 +1165,7 @@ def assessment_start(class_id, assignment_id):
     assessment = g.db.scalar(select(Avaliacao).where(Avaliacao.fk_turma_trilha == link.id))
     if not assessment:
         _fail(404, 'O professor ainda não configurou a avaliação desta trilha.')
+    _require_assessment_window(assessment)
     learning = progress_detail(g.db, g.user.id_usuario, link)
     if not learning['total'] or learning['percent'] != 100:
         _fail(409, 'Pratique cada termo da trilha pelo menos uma vez antes de iniciar a avaliação.')
@@ -1124,7 +1189,8 @@ def assessment_start(class_id, assignment_id):
         output.append(dict(id=question_id, prompt=item['prompt'], options=item['options']))
     g.db.commit()
     return jsonify(session_id=session_id, title=assessment.titulo, total=len(output),
-                   pass_score=session.nota_minima, questions=output), 201
+                   pass_score=session.nota_minima, closes_at=aware(assessment.encerra_em).isoformat(),
+                   questions=output), 201
 
 
 @api.post('/assessment/sessions/<session_id>/answer')
@@ -1140,6 +1206,8 @@ def assessment_answer(session_id):
         _fail(404, 'Avaliação não encontrada.')
     if session.finalizada_em:
         _fail(409, 'Esta avaliação já foi finalizada.')
+    assessment = g.db.get(Avaliacao, session.fk_avaliacao)
+    _require_assessment_window(assessment)
     question = g.db.scalar(select(AvaliacaoQuestao).where(
         AvaliacaoQuestao.id == question_id,
         AvaliacaoQuestao.fk_sessao == session.id,
@@ -1176,6 +1244,8 @@ def assessment_finish(session_id):
     if not session:
         _fail(404, 'Avaliação não encontrada.')
     if not session.finalizada_em:
+        assessment = g.db.get(Avaliacao, session.fk_avaliacao)
+        _require_assessment_window(assessment)
         unanswered = g.db.scalar(select(func.count(AvaliacaoQuestao.id)).where(
             AvaliacaoQuestao.fk_sessao == session.id,
             AvaliacaoQuestao.respondida.is_(False),

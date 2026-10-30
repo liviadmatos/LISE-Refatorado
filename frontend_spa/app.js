@@ -33,6 +33,25 @@
     if (Number.isNaN(date.getTime())) return 'Ainda não acessou';
     return new Intl.DateTimeFormat('pt-BR', includeTime ? { dateStyle: 'short', timeStyle: 'short' } : { dateStyle: 'short' }).format(date);
   };
+  const fmtBrazilDate = (value) => {
+    if (!value) return 'Horário indisponível';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Horário indisponível';
+    return new Intl.DateTimeFormat('pt-BR', {
+      dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo', hourCycle: 'h23'
+    }).format(date);
+  };
+  const dateTimeInputValue = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit',
+      day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    }).formatToParts(date);
+    const fields = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}`;
+  };
   const gameTitle = (id) => id === 'avaliacao_trilha' ? 'Avaliação da trilha' : (GAMES.find(g => g.id === id)?.title || id);
   const morphLabel = (value) => ({PREFIXO:'Prefixo', SUFIXO:'Sufixo', RADICAL:'Radical', RAIZ:'Raiz', ELEMENTO_COMPOSICAO:'Elemento de composição'})[value] || value || 'Elemento etimológico';
   const sourceLink = (url, label = 'Consultar fonte') => url ? `<a class="source-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>` : '';
@@ -293,15 +312,20 @@
     return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="back-to-class">← ${esc(detail.class_name)}</button><div class="eyebrow" style="margin-top:1rem">Acompanhamento da turma</div><h1 class="page-title">${esc(s.name)}</h1><p>${esc(s.email)} · Último acesso: ${fmtDate(s.last_access)}</p></div></div>
       <div class="grid grid-2"><div class="stat-card"><strong>${s.weekly_xp}</strong><span>XP nesta turma nesta semana</span></div></div>
       <div class="split-heading"><h2>Trilhas atribuídas nesta turma</h2></div>
-      ${detail.trails.length ? `<div class="grid grid-2">${detail.trails.map(t=>`<article class="card"><div class="card-top"><span class="chip">${esc(t.area)}</span><span class="chip ${['atrasado','concluida_com_atraso'].includes(t.status)?'danger':'gold'}">${esc(t.status_label)}</span></div><h3>${esc(t.name)}</h3><p>${t.played} de ${t.total} termos praticados (${t.percent}%)</p><div class="progress-track"><div class="progress-fill" style="width:${t.percent}%"></div></div><p class="muted small">Prazo: ${t.due_date?fmtDate(t.due_date,false):'Sem prazo'}</p><p>${t.completed?'Trilha concluída.':t.assessment?.passed?'Avaliação aprovada; falta praticar todos os termos.':t.assessment?'Avaliação ainda não aprovada.': 'Avaliação ainda não configurada pelo professor.'}</p>${t.attempts.length?`<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Tentativa</th><th>Nota</th><th>Resultado</th><th>Data</th></tr></thead><tbody>${t.attempts.map((a,i)=>`<tr><td>${i+1}</td><td>${a.score}%</td><td>${a.passed?'Aprovado':'Não aprovado'}</td><td>${fmtDate(a.played_at)}</td></tr>`).join('')}</tbody></table></div>`:''}</article>`).join('')}</div>`:empty('Nenhuma trilha atribuída', 'Esta turma ainda não tem trilhas para acompanhar.')}`;
+      ${detail.trails.length ? `<div class="grid grid-2">${detail.trails.map(t=>{
+        const schedule=t.assessment?.opens_at && t.assessment?.closes_at
+          ? `BioQuiz: ${fmtBrazilDate(t.assessment.opens_at)} até ${fmtBrazilDate(t.assessment.closes_at)}.`
+          : t.assessment ? 'O BioQuiz ainda não foi agendado.' : '';
+        return `<article class="card"><div class="card-top"><span class="chip">${esc(t.area)}</span><span class="chip ${['atrasado','concluida_com_atraso'].includes(t.status)?'danger':'gold'}">${esc(t.status_label)}</span></div><h3>${esc(t.name)}</h3><p>${t.played} de ${t.total} termos praticados (${t.percent}%)</p><div class="progress-track"><div class="progress-fill" style="width:${t.percent}%"></div></div><p class="muted small">Prazo da trilha: ${t.due_date?fmtBrazilDate(t.due_date):'Sem prazo'}</p>${schedule?`<p class="muted small">${schedule} O prazo da trilha termina no encerramento.</p>`:''}<p>${t.completed?'Trilha concluída.':t.assessment?.passed?'BioQuiz aprovado; falta praticar todos os termos.':t.assessment?'BioQuiz ainda não aprovado.': 'BioQuiz ainda não configurado pelo professor.'}</p>${t.attempts.length?`<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Tentativa</th><th>Nota</th><th>Resultado</th><th>Data</th></tr></thead><tbody>${t.attempts.map((a,i)=>`<tr><td>${i+1}</td><td>${a.score}%</td><td>${a.passed?'Aprovado':'Não aprovado'}</td><td>${fmtDate(a.played_at)}</td></tr>`).join('')}</tbody></table></div>`:''}</article>`;
+      }).join('')}</div>`:empty('Nenhuma trilha atribuída', 'Esta turma ainda não tem trilhas para acompanhar.')}`;
   }
 
   function renderAssessmentConfig() {
     const target=state.assessmentTarget;
     if (!target) return loadingCard();
     const a=target.assessment || {};
-    return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="back-to-class">← Voltar para a turma</button><div class="eyebrow" style="margin-top:1rem">Avaliação do professor</div><h1 class="page-title">${a.id?'Editar avaliação':'Configurar avaliação'}</h1><p>${esc(target.trail_name)} · A avaliação só fica disponível ao aluno depois que ele praticar todos os termos da trilha.</p></div></div>
-      <form class="card question" data-form="assessment-config"><div class="field"><label>Título</label><input name="title" maxlength="150" required value="${esc(a.title || `Avaliação: ${target.trail_name}`)}"></div><div class="form-row"><div class="field"><label>Quantidade de questões</label><input name="question_count" type="number" min="1" max="50" value="${a.question_count || 10}" required></div><div class="field"><label>Nota mínima (%)</label><input name="pass_score" type="number" min="0" max="100" value="${a.pass_score ?? 70}" required></div></div><div class="form-row"><div class="field"><label>Conteúdo</label><select name="content"><option value="ambos" ${!a.content||a.content==='ambos'?'selected':''}>Termos e radicais</option><option value="termos" ${a.content==='termos'?'selected':''}>Somente termos</option><option value="radicais" ${a.content==='radicais'?'selected':''}>Somente radicais</option></select></div><div class="field"><label>Formato</label><select name="mode"><option value="misto" ${!a.mode||a.mode==='misto'?'selected':''}>Misto</option><option value="termo_definicao" ${a.mode==='termo_definicao'?'selected':''}>Termo para definição</option><option value="definicao_termo" ${a.mode==='definicao_termo'?'selected':''}>Definição para termo</option><option value="radical_significado" ${a.mode==='radical_significado'?'selected':''}>Radical para significado</option><option value="significado_radical" ${a.mode==='significado_radical'?'selected':''}>Significado para radical</option></select></div></div><button class="btn btn-primary" type="submit">Salvar avaliação</button></form>`;
+    return `<div class="section-heading"><div><button class="btn btn-plain btn-small" data-action="back-to-class">← Voltar para a turma</button><div class="eyebrow" style="margin-top:1rem">BioQuiz final da trilha</div><h1 class="page-title">${a.id?'Editar BioQuiz':'Configurar BioQuiz'}</h1><p>${esc(target.trail_name)} · O aluno só poderá iniciar depois de praticar todos os termos e durante esta janela, no fuso de Brasília. O encerramento também encerra o prazo da trilha.</p></div></div>
+      <form class="card question" data-form="assessment-config"><div class="field"><label>Título</label><input name="title" maxlength="150" required value="${esc(a.title || `BioQuiz: ${target.trail_name}`)}"></div><div class="form-row"><div class="field"><label>Quantidade de questões</label><input name="question_count" type="number" min="1" max="50" value="${a.question_count || 10}" required></div><div class="field"><label>Nota mínima (%)</label><input name="pass_score" type="number" min="0" max="100" value="${a.pass_score ?? 70}" required></div></div><div class="form-row"><div class="field"><label>Abre em (Brasília)</label><input name="opens_at" type="datetime-local" value="${dateTimeInputValue(a.opens_at)}" required></div><div class="field"><label>Encerra em (Brasília)</label><input name="closes_at" type="datetime-local" value="${dateTimeInputValue(a.closes_at)}" required></div></div><div class="form-row"><div class="field"><label>Conteúdo</label><select name="content"><option value="ambos" ${!a.content||a.content==='ambos'?'selected':''}>Termos e radicais</option><option value="termos" ${a.content==='termos'?'selected':''}>Somente termos</option><option value="radicais" ${a.content==='radicais'?'selected':''}>Somente radicais</option></select></div><div class="field"><label>Formato</label><select name="mode"><option value="misto" ${!a.mode||a.mode==='misto'?'selected':''}>Misto</option><option value="termo_definicao" ${a.mode==='termo_definicao'?'selected':''}>Termo para definição</option><option value="definicao_termo" ${a.mode==='definicao_termo'?'selected':''}>Definição para termo</option><option value="radical_significado" ${a.mode==='radical_significado'?'selected':''}>Elemento para significado</option><option value="significado_radical" ${a.mode==='significado_radical'?'selected':''}>Significado para elemento</option></select></div></div><button class="btn btn-primary" type="submit">Salvar agendamento</button></form>`;
   }
 
   function renderAssessment() {
@@ -310,7 +334,7 @@
     const q=session.questions[state.assessmentIndex];
     if (!q) return loadingCard('Preparando avaliação…');
     const progress=Math.round(state.assessmentIndex/session.total*100);
-    return `<section class="card question"> <div class="eyebrow">Avaliação da trilha · Questão ${state.assessmentIndex+1} de ${session.total}</div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><h1 class="question-title">${esc(q.prompt)}</h1>${state.assessmentAnswer?`<div class="feedback ${state.assessmentAnswer.correct?'good':'bad'}"><strong>${state.assessmentAnswer.correct?'Resposta correta':'Resposta incorreta'}</strong><p>Resposta: ${esc(state.assessmentAnswer.answer)}</p></div><div class="card-actions">${button(state.assessmentIndex+1<session.total?'Próxima questão':'Finalizar avaliação','assessment-next','btn-primary')}</div>`:`<form data-form="assessment-answer"><div class="option-list">${q.options.map(o=>`<label class="option"><input type="radio" name="answer" value="${esc(o.id)}" required><span>${esc(o.label)}</span></label>`).join('')}</div><button class="btn btn-primary" type="submit">Responder</button></form>`}</section>`;
+    return `<section class="card question"> <div class="eyebrow">BioQuiz final · Questão ${state.assessmentIndex+1} de ${session.total}</div><p class="muted small">Prazo final: ${fmtBrazilDate(session.closes_at)} (horário de Brasília)</p><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><h1 class="question-title">${esc(q.prompt)}</h1>${state.assessmentAnswer?`<div class="feedback ${state.assessmentAnswer.correct?'good':'bad'}"><strong>${state.assessmentAnswer.correct?'Resposta correta':'Resposta incorreta'}</strong><p>Resposta: ${esc(state.assessmentAnswer.answer)}</p></div><div class="card-actions">${button(state.assessmentIndex+1<session.total?'Próxima questão':'Finalizar BioQuiz','assessment-next','btn-primary')}</div>`:`<form data-form="assessment-answer"><div class="option-list">${q.options.map(o=>`<label class="option"><input type="radio" name="answer" value="${esc(o.id)}" required><span>${esc(o.label)}</span></label>`).join('')}</div><button class="btn btn-primary" type="submit">Responder</button></form>`}</section>`;
   }
 
   function renderAssessmentResult() {
@@ -343,10 +367,16 @@
     }
     return `${assign}${trails.length ? `<div class="grid grid-2">${trails.map(t=>{
       const learning=t.status_label ? `<div class="trail-progress"><span>${t.played || 0} de ${t.total || t.terms?.length || 0} termos praticados</span><span class="chip ${['atrasado','concluida_com_atraso'].includes(t.status)?'danger':''}">${esc(t.status_label)}</span></div><div class="progress-track"><div class="progress-fill" style="width:${t.progress ?? 0}%"></div></div>` : `<p class="muted small">${t.terms?.length || 0} termos · ${t.due_date ? `Prazo: ${fmtDate(t.due_date,false)}` : 'Sem prazo definido'}</p>`;
-      const quizLabel=t.assessment?.can_start ? (t.assessment.passed?'Refazer quiz':'Fazer quiz') : 'Pratique todos os termos primeiro';
+      const quizLabel=!t.assessment?.opens_at ? 'BioQuiz sem horário' :
+        t.assessment.window_state==='agendado' ? `Abre ${fmtBrazilDate(t.assessment.opens_at)}` :
+        t.assessment.window_state==='encerrado' ? 'Prazo do BioQuiz encerrado' :
+        t.assessment.can_start ? (t.assessment.passed?'Refazer BioQuiz':'Fazer BioQuiz') : 'Pratique todos os termos primeiro';
       const assessmentAction=teacher ? button(t.assessment?'Editar avaliação':'Configurar avaliação','configure-assessment','btn-soft btn-small',`data-assignment="${t.assignment_id}" data-trail="${t.id}" data-name="${esc(t.name)}" data-class="${d.id}"`) : t.assessment ? button(quizLabel,'start-assessment',t.assessment.can_start?'btn-primary btn-small':'btn-plain btn-small',`data-assignment="${t.assignment_id}" data-class="${d.id}" ${t.assessment.can_start?'':'disabled'}`) : '<span class="muted small">Aguardando avaliação do professor</span>';
+      const quizSchedule=t.assessment ? (t.assessment.opens_at && t.assessment.closes_at ?
+        `<p class="muted small">BioQuiz: ${fmtBrazilDate(t.assessment.opens_at)} até ${fmtBrazilDate(t.assessment.closes_at)}. O prazo da trilha termina junto.</p>` :
+        '<p class="muted small">O professor ainda não agendou o BioQuiz.</p>') : '';
       const practice=teacher?'':button('Praticar trilha','practice-trail','btn-primary btn-small',`data-assignment="${t.assignment_id}" data-trail="${t.id}" data-name="${esc(t.name)}" data-class="${d.id}"`);
-      return `<article class="card"><div class="card-top"><span class="chip">${esc(t.area)}</span>${teacher?button('Remover da turma','unassign-trail','btn-danger btn-small',`data-id="${t.id}" data-class="${d.id}"`):`<span class="chip gold">${t.progress ?? 0}%</span>`}</div><h3>${esc(t.name)}</h3>${learning}<div class="card-actions">${teacher?assessmentAction:button('Ver termos','open-trail','btn-plain btn-small',`data-id="${t.id}" data-assignment="${t.assignment_id}"`)}${practice}</div></article>`;
+      return `<article class="card"><div class="card-top"><span class="chip">${esc(t.area)}</span>${teacher?button('Remover da turma','unassign-trail','btn-danger btn-small',`data-id="${t.id}" data-class="${d.id}"`):`<span class="chip gold">${t.progress ?? 0}%</span>`}</div><h3>${esc(t.name)}</h3>${learning}${quizSchedule}<div class="card-actions">${teacher?assessmentAction:button('Ver termos','open-trail','btn-plain btn-small',`data-id="${t.id}" data-assignment="${t.assignment_id}"`)}${practice}</div></article>`;
     }).join('')}</div>` : empty('Nenhuma trilha atribuída', teacher ? 'Crie uma trilha ou atribua uma das existentes.' : 'Seu professor ainda não atribuiu uma trilha a esta turma.')}`;
   }
 
@@ -868,8 +898,8 @@
         await api(`/classes/${state.classId}/trails`,{method:'POST',body:{trail_id:Number(data.get('trail_id')),due_date:data.get('due_date') || null}}); await loadClass(state.classId); state.classTab='trails'; render(); toast('Trilha atribuída à turma.');
       } else if (kind === 'assessment-config') {
         const target=state.assessmentTarget;
-        await api(`/classes/${target.class_id}/trails/${target.assignment_id}/assessment`,{method:'POST',body:{title:data.get('title'),question_count:Number(data.get('question_count')),pass_score:Number(data.get('pass_score')),content:data.get('content'),mode:data.get('mode')}});
-        await loadClass(target.class_id); state.classTab='trails'; render(); toast('Avaliação salva.');
+        await api(`/classes/${target.class_id}/trails/${target.assignment_id}/assessment`,{method:'POST',body:{title:data.get('title'),question_count:Number(data.get('question_count')),pass_score:Number(data.get('pass_score')),content:data.get('content'),mode:data.get('mode'),opens_at:data.get('opens_at'),closes_at:data.get('closes_at')}});
+        await loadClass(target.class_id); state.classTab='trails'; render(); toast('BioQuiz agendado.');
       } else if (kind === 'teacher-term') {
         await api('/terms',{method:'POST',body:{name:data.get('name'),definition:data.get('definition'),class_ids:data.getAll('class_ids').map(Number),trail_ids:data.getAll('trail_ids').map(Number)}}); await loadDashboard(); toast('Termo personalizado salvo.');
       } else if (kind === 'student-term') {

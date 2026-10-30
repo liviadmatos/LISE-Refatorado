@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app import create_app
 from backend.demo import ALUNO_ID, seed
-from backend.models import (AvaliacaoQuestao, Base, GameSession, Partida, Progresso,
-                            Turma, TurmaTrilha, Usuario)
+from backend.models import (Avaliacao, AvaliacaoQuestao, Base, GameSession, Partida,
+                            Progresso, Turma, TurmaTrilha, Usuario)
 
 
 @pytest.fixture
@@ -162,9 +162,14 @@ def test_trail_requires_practice_of_every_term_then_teacher_assessment(app):
     trail_id = trail.json['trail']['id']
     with Session(app.extensions['engine']) as db:
         assignment_id = db.scalar(select(TurmaTrilha.id).where(TurmaTrilha.fk_trilha == trail_id))
+    now = datetime.now(timezone.utc)
     config = teacher.post(f'/api/v1/classes/1/trails/{assignment_id}/assessment', headers=teacher_headers, json={
-        'title': 'Avaliação de etimologia', 'question_count': 6, 'content': 'ambos', 'mode': 'misto', 'pass_score': 70})
+        'title': 'BioQuiz de etimologia', 'question_count': 6, 'content': 'ambos',
+        'mode': 'misto', 'pass_score': 70, 'opens_at': (now - timedelta(minutes=1)).isoformat(),
+        'closes_at': (now + timedelta(hours=1)).isoformat()})
     assert config.status_code == 200, config.json
+    assert config.json['assessment']['opens_at']
+    assert config.json['assessment']['closes_at']
 
     student = app.test_client()
     student_headers = login(student)
@@ -212,6 +217,81 @@ def test_trail_requires_practice_of_every_term_then_teacher_assessment(app):
     own_assignment = next(item for item in details.json['trails'] if item['assignment_id'] == assignment_id)
     assert own_assignment['completed'] is True
     assert own_assignment['attempts'][0]['score'] == 100
+
+
+def test_assessment_window_controls_start_answers_and_trail_deadline(app):
+    teacher = app.test_client()
+    teacher_headers = login(teacher, 'professor@lise.demo')
+    trail = teacher.post('/api/v1/trails', headers=teacher_headers, json={
+        'name': 'BioQuiz agendado', 'term_ids': [1, 2, 3], 'class_ids': [1],
+        'due_date': (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()})
+    assert trail.status_code == 201, trail.json
+    with Session(app.extensions['engine']) as db:
+        assignment_id = db.scalar(select(TurmaTrilha.id).where(
+            TurmaTrilha.fk_trilha == trail.json['trail']['id']))
+
+    now = datetime.now(timezone.utc)
+    closes_at = now + timedelta(hours=2)
+    config = teacher.post(f'/api/v1/classes/1/trails/{assignment_id}/assessment',
+                          headers=teacher_headers, json={
+                              'title': 'BioQuiz agendado', 'question_count': 3,
+                              'content': 'termos', 'mode': 'misto', 'pass_score': 70,
+                              'opens_at': (now + timedelta(hours=1)).isoformat(),
+                              'closes_at': closes_at.isoformat()})
+    assert config.status_code == 200, config.json
+
+    student = app.test_client()
+    student_headers = login(student)
+    practice = student.post('/api/v1/games/sessions', headers=student_headers, json={
+        'game': 'decifrador', 'source_type': 'trail', 'source_id': assignment_id,
+        'question_count': 3})
+    assert practice.status_code == 201, practice.json
+    for question in practice.json['questions']:
+        answer = student.post(f"/api/v1/games/sessions/{practice.json['session_id']}/answer",
+                              headers=student_headers,
+                              json={'question_id': question['id'], 'answer': 'resposta errada'})
+        assert answer.status_code == 200
+    student.post(f"/api/v1/games/sessions/{practice.json['session_id']}/finish",
+                 headers=student_headers, json={})
+
+    class_detail = student.get('/api/v1/classes/1', headers=student_headers)
+    trail_view = next(item for item in class_detail.json['trails']
+                      if item['assignment_id'] == assignment_id)
+    assert trail_view['assessment']['window_state'] == 'agendado'
+    assert trail_view['assessment']['can_start'] is False
+    assert trail_view['due_date'] == config.json['assessment']['closes_at']
+    too_early = student.post(
+        f'/api/v1/classes/1/trails/{assignment_id}/assessment/sessions',
+        headers=student_headers, json={})
+    assert too_early.status_code == 409
+
+    with Session(app.extensions['engine']) as db:
+        assessment = db.scalar(select(Avaliacao).where(
+            Avaliacao.fk_turma_trilha == assignment_id))
+        assessment.abre_em = datetime.now(timezone.utc) - timedelta(minutes=1)
+        assessment.encerra_em = datetime.now(timezone.utc) + timedelta(hours=1)
+        db.commit()
+    started = student.post(
+        f'/api/v1/classes/1/trails/{assignment_id}/assessment/sessions',
+        headers=student_headers, json={})
+    assert started.status_code == 201, started.json
+
+    with Session(app.extensions['engine']) as db:
+        assessment = db.scalar(select(Avaliacao).where(
+            Avaliacao.fk_turma_trilha == assignment_id))
+        assessment.encerra_em = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+    question = started.json['questions'][0]
+    after_close = student.post(
+        f"/api/v1/assessment/sessions/{started.json['session_id']}/answer",
+        headers=student_headers, json={'question_id': question['id'],
+                                       'answer': question['options'][0]['id']})
+    assert after_close.status_code == 409
+    expired_detail = student.get('/api/v1/classes/1', headers=student_headers)
+    expired_trail = next(item for item in expired_detail.json['trails']
+                         if item['assignment_id'] == assignment_id)
+    assert expired_trail['assessment']['window_state'] == 'encerrado'
+    assert expired_trail['status'] == 'atrasado'
 
 
 def test_student_trail_details_are_scoped_and_class_feed_is_removed(app):

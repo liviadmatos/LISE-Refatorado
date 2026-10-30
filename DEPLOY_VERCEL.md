@@ -78,6 +78,9 @@ As migrações desta refatoração são:
 - `20261016161530_lise_curadoria_etimologica.sql`: acrescenta metadados e estados de validação, preserva os termos antigos como pendentes e registra o subconjunto curado com fontes e justificativas.
 - `20261016161850_lise_taxonomia_elementos.sql`: corrige a classificação de elementos de composição aprovados.
 - `20261030140000_lise_profiles.sql`: adiciona o avatar selecionável e o hash de senha usado somente na demonstração local. Aplique esta migração antes de publicar a versão com perfis.
+- `20261030150000_lise_assessment_windows.sql`: adiciona os horários de abertura e encerramento do BioQuiz da trilha. Aplique após a migração de avaliações existente e antes de publicar a versão do backend que agenda a janela; sem ela, a API atualizada não inicia corretamente.
+
+Ao configurar o BioQuiz, o professor informa a abertura e o encerramento no horário de Brasília. O encerramento define também o prazo final da trilha; a API impede iniciar, responder ou finalizar o BioQuiz fora da janela.
 
 ## Referências oficiais
 

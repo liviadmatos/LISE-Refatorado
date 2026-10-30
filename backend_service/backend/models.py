@@ -270,6 +270,8 @@ class Avaliacao(Base):
     conteudo = Column(String(16), nullable=False, default='ambos')
     formato = Column(String(32), nullable=False, default='misto')
     nota_minima = Column(Integer, nullable=False, default=70)
+    abre_em = Column(DateTime(timezone=True))
+    encerra_em = Column(DateTime(timezone=True))
     fk_professor = Column(Uuid(as_uuid=False), ForeignKey('usuarios.id_usuario', ondelete='CASCADE'), nullable=False)
     criada_em = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
